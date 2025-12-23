@@ -1,0 +1,29 @@
+﻿<Window x:Class="Client.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Speech Client" Height="400" Width="600">
+
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+            <Button Content="Select WAV"
+                    Width="120"
+                    Command="{Binding SelectFileCommand}"/>
+
+            <Button Content="Send"
+                    Width="120"
+                    Margin="10,0,0,0"
+                    Command="{Binding SendCommand}"
+                    IsEnabled="{Binding CanSend}"/>
+        </StackPanel>
+
+        <TextBox Grid.Row="1"
+                 Text="{Binding Log}"
+                 IsReadOnly="True"
+                 VerticalScrollBarVisibility="Auto"/>
+    </Grid>
+</Window>

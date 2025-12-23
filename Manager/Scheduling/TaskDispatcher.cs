@@ -1,0 +1,56 @@
+﻿// Scheduling/TaskDispatcher.cs
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Common.Messages;
+
+class TaskDispatcher
+{
+    private readonly List<WorkerSession> _workers;
+
+    public TaskDispatcher(List<WorkerSession> workers)
+    {
+        _workers = workers;
+    }
+
+    public async Task RunAsync(CancellationToken ct)
+    {
+        _ = Task.Run(() => DispatchExtract(ct), ct);
+        _ = Task.Run(() => DispatchTranscribe(ct), ct);
+    }
+
+    private async Task DispatchExtract(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            foreach (var w in _workers.Where(w => w.Info.FreeExtract > 0))
+            {
+                if (!TaskQueues.ExtractQueue.TryDequeue(out var task))
+                    break;
+
+                w.Info.DecExtract();
+                await w.SendAsync(task, ct);
+            }
+
+            await Task.Delay(50, ct);
+        }
+    }
+
+    private async Task DispatchTranscribe(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            foreach (var w in _workers.Where(w => w.Info.FreeTranscribe > 0))
+            {
+                if (!TaskQueues.TranscribeQueue.TryDequeue(out var task))
+                    break;
+
+                w.Info.DecTranscribe();
+                await w.SendAsync(task, ct);
+            }
+
+            await Task.Delay(50, ct);
+        }
+    }
+}

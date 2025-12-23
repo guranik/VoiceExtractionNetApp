@@ -1,0 +1,37 @@
+﻿// Network/ManagerConnection.cs
+using System;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+using Common.Messages;
+using Common.Networking;
+
+class ManagerConnection : IDisposable
+{
+    private TcpClient _client;
+    private TcpMessageReader _reader;
+    private TcpMessageWriter _writer;
+
+    public bool IsConnected => _client?.Connected == true;
+
+    public async Task ConnectAsync(string ip, int port, CancellationToken ct)
+    {
+        _client = new TcpClient();
+        await _client.ConnectAsync(ip, port, ct);
+
+        _reader = new TcpMessageReader(_client);
+        _writer = new TcpMessageWriter(_client);
+    }
+
+    public Task SendAsync(MessageBase msg, CancellationToken ct)
+        => _writer.SendAsync(msg, ct);
+
+    public async Task<MessageBase> ReadAsync(CancellationToken ct)
+        => await _reader.ReadAsync(ct);
+
+    public void Dispose()
+    {
+        _client?.Close();
+        _client?.Dispose();
+    }
+}
