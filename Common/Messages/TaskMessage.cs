@@ -1,24 +1,14 @@
-﻿// Messages/TaskMessage.cs
+﻿using Common.Messages;
 using Common.Models;
-
-namespace Common.Messages;
 
 public sealed class TaskMessage : MessageBase
 {
-    public TaskType TaskType { get; init; }
+    public override MessageType Type =>
+        TaskType == TaskType.Extract
+            ? MessageType.ExtractTask
+            : MessageType.TranscribeTask;
 
-    /// <summary>
-    /// Исходное имя wav-файла
-    /// </summary>
-    public string SourceFileName { get; init; } = string.Empty;
-
-    /// <summary>
-    /// Список файлов (wav или txt)
-    /// </summary>
-    public List<FilePayload> Files { get; init; } = new();
-
-    public TaskMessage()
-    {
-        Type = MessageType.ExtractTask;
-    }
+    public TaskType TaskType { get; set; }
+    public string SourceFileName { get; set; }
+    public List<FilePayload> Files { get; set; } = new();
 }

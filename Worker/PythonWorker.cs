@@ -1,22 +1,15 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
+﻿using System.Diagnostics;
 using System.Text;
-using System.Threading.Tasks;
-using Common;
 
-class PythonWorker
+class PythonWorker : IDisposable
 {
-    public bool IsFree { get; set; } = true;
     public int ThreadIndex { get; }
 
     private readonly string _outputDir;
     private readonly Process _process;
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<List<string>>> _pending;
-    private readonly TaskCompletionSource<bool> _readyTcs;
+    private TaskCompletionSource<List<string>>? _currentTask;
+    private readonly TaskCompletionSource<bool> _readyTcs =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task Ready => _readyTcs.Task;
 
@@ -24,8 +17,6 @@ class PythonWorker
     {
         ThreadIndex = index;
         _outputDir = outputDir;
-        _pending = new ConcurrentDictionary<string, TaskCompletionSource<List<string>>>();
-        _readyTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         _process = new Process
         {
@@ -40,19 +31,18 @@ class PythonWorker
                 CreateNoWindow = true,
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
-            },
-            EnableRaisingEvents = true
+            }
         };
 
-        _process.OutputDataReceived += (_, e) => ProcessLine(e.Data, false);
-        _process.ErrorDataReceived += (_, e) => ProcessLine(e.Data, true);
+        _process.OutputDataReceived += (_, e) => OnLine(e.Data, false);
+        _process.ErrorDataReceived += (_, e) => OnLine(e.Data, true);
 
         _process.Start();
         _process.BeginOutputReadLine();
         _process.BeginErrorReadLine();
     }
 
-    private void ProcessLine(string line, bool isError)
+    private void OnLine(string? line, bool isError)
     {
         if (string.IsNullOrWhiteSpace(line))
             return;
@@ -67,51 +57,48 @@ class PythonWorker
         }
 
         if (isError)
+        {
             Console.WriteLine($"[PY-{ThreadIndex}] [ERROR] {line}");
-        else
-            Console.WriteLine($"[PY-{ThreadIndex}] {line}");
+            return;
+        }
+
+        Console.WriteLine($"[PY-{ThreadIndex}] {line}");
 
         if (line.StartsWith("DONE"))
-        {
-            if (_pending.Any())
-            {
-                var key = _pending.Keys.First();
-                if (_pending.TryRemove(key, out var tcs))
-                {
-                    var files = Directory.Exists(_outputDir)
-                        ? Directory.GetFiles(_outputDir)
-                            .Where(f => Path.GetFileName(f).StartsWith($"{ThreadIndex}_"))
-                            .Select(f => Path.GetFileName(f).Substring(f.IndexOf('_') + 1))
-                            .ToList()
-                        : new List<string>();
+            CompleteTask();
+    }
 
-                    tcs.TrySetResult(files);
-                    IsFree = true;
-                }
-            }
-        }
+    private void CompleteTask()
+    {
+        var files = Directory.GetFiles(_outputDir)
+            .Select(Path.GetFileName)
+            .Where(f => f!.StartsWith($"{ThreadIndex}_"))
+            .Select(f => f!.Substring($"{ThreadIndex}_".Length))
+            .ToList();
+
+        _currentTask?.TrySetResult(files);
+        _currentTask = null;
     }
 
     public Task<List<string>> SendTask(string fileName)
     {
-        var tcs = new TaskCompletionSource<List<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (_currentTask != null)
+            throw new InvalidOperationException("Worker already busy");
 
-        if (!_pending.TryAdd(fileName, tcs))
-            throw new InvalidOperationException("Duplicate task");
+        _currentTask = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _process.StandardInput.WriteLine(fileName);
+        _process.StandardInput.Flush();
 
+        return _currentTask.Task;
+    }
+
+    public void Dispose()
+    {
         try
         {
-            _process.StandardInput.WriteLine(fileName);
-            _process.StandardInput.Flush();
+            if (!_process.HasExited)
+                _process.Kill(true);
         }
-        catch (Exception ex)
-        {
-            _pending.TryRemove(fileName, out _);
-            Console.WriteLine($"[PY-{ThreadIndex}] [ERROR] Failed to write to stdin: {ex}");
-            tcs.TrySetResult(new List<string>());
-            IsFree = true;
-        }
-
-        return tcs.Task;
+        catch { }
     }
 }

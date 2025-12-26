@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Threading.Channels;
 using Common.Messages;
 using Common.Models;
 using Common.Utils;
@@ -13,149 +14,151 @@ class WorkerService
     private const int ManagerPort = 5000;
 
     private readonly WorkerState _state = new();
-    private ManagerConnection _connection;
+    private ManagerConnection _connection = null!;
+    private readonly Channel<TaskMessage> _taskQueue =
+        Channel.CreateUnbounded<TaskMessage>();
 
     public async Task RunAsync(CancellationToken ct)
     {
+        CleanWorkingDirectories();
+        await InitializeWorkersAsync(ct);
+        await ConnectAsync(ct);
+
+        _ = Task.Run(() => HeartbeatLoop(ct), ct);
+        _ = Task.Run(() => DispatcherLoop(ct), ct);
+
         while (!ct.IsCancellationRequested)
         {
-            try
-            {
-                await InitializePythonWorkersAsync(ct);
-                await ConnectAndServeAsync(ct);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ERROR] Worker error: {ex}");
-                Cleanup();
-                await Task.Delay(3000, ct);
-            }
+            var msg = await _connection.ReadAsync(ct);
+            if (msg is TaskMessage task)
+                await _taskQueue.Writer.WriteAsync(task, ct);
         }
     }
 
-    private async Task InitializePythonWorkersAsync(CancellationToken ct)
+    private async Task InitializeWorkersAsync(CancellationToken ct)
     {
-        int extract = 1;
-        int transcribe = 3;
+        const int extract = 1;
+        const int transcribe = 3;
+
+        var extractPool = Channel.CreateBounded<PythonWorker>(extract);
+        var transcribePool = Channel.CreateBounded<PythonWorker>(transcribe);
 
         string root = Directory.GetCurrentDirectory();
 
         for (int i = 0; i < extract; i++)
         {
-            _state.ExtractWorkers.Add(new PythonWorker(
+            var w = new PythonWorker(
                 @"C:\Projects\VoiceExtraction\speech_extractor.py",
-                Path.Combine(root, "extract_segments"),
-                Path.Combine(root, "transcribe_segments"),
-                i));
+                "extract_segments",
+                "transcribe_segments",
+                i);
+
+            _state.AllWorkers.Add(w);
+            await w.Ready;
+            await extractPool.Writer.WriteAsync(w, ct);
         }
 
         for (int i = 0; i < transcribe; i++)
         {
-            _state.TranscribeWorkers.Add(new PythonWorker(
+            var w = new PythonWorker(
                 @"C:\Projects\VoiceExtraction\speech_transcriptor.py",
-                Path.Combine(root, "transcribe_segments"),
-                Path.Combine(root, "transcriptions"),
-                i));
+                "transcribe_segments",
+                "transcriptions",
+                i);
+
+            _state.AllWorkers.Add(w);
+            await w.Ready;
+            await transcribePool.Writer.WriteAsync(w, ct);
         }
 
-        await Task.WhenAll(
-            _state.ExtractWorkers.Select(w => w.Ready)
-                .Concat(_state.TranscribeWorkers.Select(w => w.Ready))
-        );
+        _state.ExtractPool = extractPool;
+        _state.TranscribePool = transcribePool;
+
+        Console.WriteLine("Все Python-воркеры готовы.");
     }
 
-    private async Task ConnectAndServeAsync(CancellationToken ct)
+    private async Task ConnectAsync(CancellationToken ct)
     {
         _connection = new ManagerConnection();
         await _connection.ConnectAsync(ManagerIp, ManagerPort, ct);
 
         await _connection.SendAsync(new WorkerHelloMessage
         {
-            ExtractThreads = _state.ExtractWorkers.Count,
-            TranscribeThreads = _state.TranscribeWorkers.Count
+            ExtractThreads = _state.ExtractPool.Reader.Count,
+            TranscribeThreads = _state.TranscribePool.Reader.Count
         }, ct);
+    }
 
-        _ = Task.Run(() => HeartbeatLoop(ct), ct);
-
-        while (!ct.IsCancellationRequested)
+    private async Task DispatcherLoop(CancellationToken ct)
+    {
+        await foreach (var task in _taskQueue.Reader.ReadAllAsync(ct))
         {
-            var msg = await _connection.ReadAsync(ct);
-            if (msg != null)
-                await HandleMessageAsync(msg, ct);
+            _ = Task.Run(() => HandleTask(task, ct), ct);
         }
     }
 
-    private async Task HandleMessageAsync(MessageBase msg, CancellationToken ct)
+    private async Task HandleTask(TaskMessage task, CancellationToken ct)
     {
-        switch (msg)
+        if (task.TaskType == TaskType.Extract)
+            await Process(task, _state.ExtractPool, "extract_segments", ct);
+        else
+            await Process(task, _state.TranscribePool, "transcribe_segments", ct);
+    }
+
+    private async Task Process(
+        TaskMessage task,
+        Channel<PythonWorker> pool,
+        string inputDir,
+        CancellationToken ct)
+    {
+        var worker = await pool.Reader.ReadAsync(ct);
+
+        try
         {
-            case TaskMessage task:
-                if (task.TaskType == TaskType.Extract)
-                    await HandleExtractTaskAsync(task, ct);
-                else
-                    await HandleTranscribeTaskAsync(task, ct);
-                break;
+            foreach (var f in task.Files)
+                Base64FileHelper.WriteBase64ToFile(
+                    Path.Combine(inputDir, f.FileName),
+                    f.Base64Content);
+
+            var produced = await worker.SendTask(task.SourceFileName);
+
+            var payload = produced.Select(f =>
+            {
+                var path = Path.Combine(
+                    task.TaskType == TaskType.Extract
+                        ? "transcribe_segments"
+                        : "transcriptions",
+                    $"{worker.ThreadIndex}_{f}");
+
+                return new FilePayload
+                {
+                    FileName = f,
+                    Base64Content = Base64FileHelper.ReadFileAsBase64(path)
+                };
+            }).ToList();
+
+            await _connection.SendAsync(new TaskMessage
+            {
+                TaskType = task.TaskType,
+                SourceFileName = task.SourceFileName,
+                Files = payload
+            }, ct);
+
+            foreach (var f in produced)
+            {
+                var path = Path.Combine(
+                    task.TaskType == TaskType.Extract
+                        ? "transcribe_segments"
+                        : "transcriptions",
+                    $"{worker.ThreadIndex}_{f}");
+
+                TryDelete(path);
+            }
         }
-    }
-
-    private async Task HandleExtractTaskAsync(TaskMessage task, CancellationToken ct)
-    {
-        var worker = _state.ExtractWorkers.First(w => w.IsFree);
-        worker.IsFree = false;
-
-        foreach (var file in task.Files)
-            Base64FileHelper.WriteBase64ToFile(
-                Path.Combine("extract_segments", file.FileName),
-                file.Base64Content);
-
-        var produced = await worker.SendTask(task.SourceFileName);
-
-        var payload = produced.Select(f =>
+        finally
         {
-            var path = Path.Combine("transcribe_segments", $"{worker.ThreadIndex}_{f}");
-            return new FilePayload
-            {
-                FileName = f,
-                Base64Content = Base64FileHelper.ReadFileAsBase64(path)
-            };
-        }).ToList();
-
-        await _connection.SendAsync(new TaskMessage
-        {
-            TaskType = TaskType.Extract,
-            SourceFileName = task.SourceFileName,
-            Files = payload
-        }, ct);
-    }
-
-    private async Task HandleTranscribeTaskAsync(TaskMessage task, CancellationToken ct)
-    {
-        var worker = _state.TranscribeWorkers.First(w => w.IsFree);
-        worker.IsFree = false;
-
-        foreach (var file in task.Files)
-            Base64FileHelper.WriteBase64ToFile(
-                Path.Combine("transcribe_segments", file.FileName),
-                file.Base64Content);
-
-        var produced = await worker.SendTask(task.SourceFileName);
-
-        var payload = produced.Select(f =>
-        {
-            var path = Path.Combine("transcriptions", $"{worker.ThreadIndex}_{f}");
-            return new FilePayload
-            {
-                FileName = f,
-                Base64Content = Base64FileHelper.ReadFileAsBase64(path)
-            };
-        }).ToList();
-
-        await _connection.SendAsync(new TaskMessage
-        {
-            TaskType = TaskType.Transcribe,
-            SourceFileName = task.SourceFileName,
-            Files = payload
-        }, ct);
+            await pool.Writer.WriteAsync(worker, ct);
+        }
     }
 
     private async Task HeartbeatLoop(CancellationToken ct)
@@ -167,18 +170,32 @@ class WorkerService
         }
     }
 
-    private void Cleanup()
+    private static void TryDelete(string path)
     {
         try
         {
-            Directory.Delete("extract_segments", true);
-            Directory.Delete("transcribe_segments", true);
-            Directory.Delete("transcriptions", true);
+            if (File.Exists(path))
+                File.Delete(path);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WARN] Failed to delete {path}: {ex.Message}");
+        }
+    }
 
-        DirectoryValidator.ValidateWorkerEnvironment();
-        _connection?.Dispose();
-        _state.DisposeAll();
+
+    private static void CleanWorkingDirectories()
+    {
+        foreach (var dir in new[]
+        {
+            "extract_segments",
+            "transcribe_segments",
+            "transcriptions"
+        })
+        {
+            Directory.CreateDirectory(dir);
+            foreach (var f in Directory.GetFiles(dir))
+                File.Delete(f);
+        }
     }
 }

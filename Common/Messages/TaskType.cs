@@ -1,5 +1,4 @@
-﻿// Messages/TaskType.cs
-namespace Common.Messages;
+﻿namespace Common.Messages;
 
 public enum TaskType
 {

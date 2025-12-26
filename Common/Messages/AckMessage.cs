@@ -1,5 +1,4 @@
-﻿// Messages/AckMessage.cs
-namespace Common.Messages;
+﻿namespace Common.Messages;
 
 public sealed class AckMessage : MessageBase
 {

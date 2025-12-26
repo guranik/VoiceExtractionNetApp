@@ -1,5 +1,4 @@
-﻿// Messages/HeartBeatMessage.cs
-namespace Common.Messages;
+﻿namespace Common.Messages;
 
 public sealed class HeartBeatMessage : MessageBase
 {

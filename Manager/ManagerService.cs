@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -8,25 +9,40 @@ using System.Threading.Tasks;
 using Common.Messages;
 using Common.Models;
 using Common.Utils;
+using Common.Networking;
+using System.Data;
 
 class ManagerService
 {
     private const int Port = 5000;
 
-    private readonly List<WorkerSession> _workers = new();
     private readonly WorkerListener _listener = new(Port);
+
+    private readonly List<WorkerSession> _workers = new();
+
+    private readonly ConcurrentQueue<(TcpClient client, MessageBase msg)>
+        _incoming = new();
 
     public async Task RunAsync(CancellationToken ct)
     {
+        CleanDirectories(
+            "input",
+            "extract_segments",
+            "transcribe_segments",
+            "transcriptions"
+        );
+
         _listener.Start();
 
-        _ = Task.Run(() => AcceptLoop(ct), ct);
-        _ = Task.Run(() => HeartbeatMonitor(ct), ct);
+        var tasks = new[]
+        {
+        AcceptLoop(ct),
+        MessageDispatcher(ct),
+        HeartbeatMonitor(ct),
+        new TaskDispatcher(_workers).RunAsync(ct)
+    };
 
-        var dispatcher = new TaskDispatcher(_workers);
-        await dispatcher.RunAsync(ct);
-
-        await InputLoop(ct);
+        await Task.WhenAll(tasks);
     }
 
     private async Task AcceptLoop(CancellationToken ct)
@@ -34,69 +50,168 @@ class ManagerService
         while (!ct.IsCancellationRequested)
         {
             var client = await _listener.AcceptAsync(ct);
-            _ = Task.Run(() => HandleWorker(client, ct), ct);
+            _ = Task.Run(() => ClientReadLoop(client, ct), ct);
         }
     }
 
-    private async Task HandleWorker(TcpClient client, CancellationToken ct)
+    private async Task ClientReadLoop(TcpClient client, CancellationToken ct)
     {
-        var reader = new Common.Networking.TcpMessageReader(client);
-        var writer = new Common.Networking.TcpMessageWriter(client);
+        var reader = new TcpMessageReader(client);
 
-        var hello = (WorkerHelloMessage)await reader.ReadAsync(ct);
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var msg = await reader.ReadAsync(ct);
+                if (msg == null)
+                    continue;
 
-        var info = new WorkerInfo(client, hello.ExtractThreads, hello.TranscribeThreads);
+                _incoming.Enqueue((client, msg));
+            }
+        }
+        catch(Exception ex)
+        {
+            client.Close();
+        }
+    }
+
+    private async Task MessageDispatcher(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            while (_incoming.TryDequeue(out var item))
+            {
+                await HandleIncoming(item.client, item.msg, ct);
+            }
+
+            await Task.Delay(5, ct);
+        }
+    }
+
+    private async Task HandleIncoming(
+        TcpClient client,
+        MessageBase msg,
+        CancellationToken ct)
+    {
+        switch (msg)
+        {
+            case WorkerHelloMessage hello:
+                Console.WriteLine($"Получено сообщение: {hello.Type}");
+                await RegisterWorker(client, hello, ct);
+                break;
+
+            case HeartBeatMessage:
+                Console.WriteLine($"HeartBeat");
+                GetWorker(client)?.Info.UpdateHeartbeat();
+                break;
+
+            case TaskMessage task:
+                Console.WriteLine($"Получено сообщение: {task.Type}");
+                await HandleWorkerTask(task, client);
+                break;
+
+            case ClientInputMessage input:
+                Console.WriteLine($"Получено сообщение от клиента");
+                await HandleClientInputAsync(input);
+                break;
+        }
+    }
+
+    private async Task RegisterWorker(
+        TcpClient client,
+        WorkerHelloMessage hello,
+        CancellationToken ct)
+    {
+        if (GetWorker(client) != null)
+            return;
+
+        var info = new WorkerInfo(
+            client,
+            hello.ExtractThreads,
+            hello.TranscribeThreads);
+
         var session = new WorkerSession(client, info);
 
         lock (_workers)
             _workers.Add(session);
 
+        var writer = new TcpMessageWriter(client);
         await writer.SendAsync(new AckMessage
         {
             AckedMessageId = hello.MessageId
         }, ct);
 
-        while (!ct.IsCancellationRequested)
-        {
-            var msg = await session.ReadAsync(ct);
-            await HandleWorkerMessage(session, msg);
-        }
+        Console.WriteLine(
+            $"Worker registered: extract={hello.ExtractThreads}, " +
+            $"transcribe={hello.TranscribeThreads}");
     }
 
-    private async Task HandleWorkerMessage(WorkerSession session, MessageBase msg)
+    private WorkerSession GetWorker(TcpClient client)
     {
-        switch (msg)
+        lock (_workers)
+            return _workers.FirstOrDefault(w => w.Info.Client == client);
+    }
+
+    private async Task HandleWorkerTask(TaskMessage task, TcpClient client)
+    {
+        var worker = _workers.First(w => w.Info.Client == client);
+
+        if (task.TaskType == TaskType.Extract)
         {
-            case HeartBeatMessage:
-                session.Info.UpdateHeartbeat();
-                break;
+            worker.Info.IncExtract();
 
-            case TaskMessage task:
-                if (task.TaskType == TaskType.Extract)
+            foreach (var f in task.Files)
+            {
+                var segmentPath = Path.Combine("transcribe_segments", f.FileName);
+                Base64FileHelper.WriteBase64ToFile(segmentPath, f.Base64Content);
+
+                var transcribeTask = new TaskMessage
                 {
-                    session.Info.IncExtract();
+                    TaskType = TaskType.Transcribe,
+                    SourceFileName = f.FileName,
+                    Files = new List<FilePayload> { f }
+                };
 
-                    foreach (var f in task.Files)
-                        Base64FileHelper.WriteBase64ToFile(
-                            Path.Combine("transcribe_segments", f.FileName),
-                            f.Base64Content);
-
-                    TaskQueues.TranscribeQueue.Enqueue(task);
+                if (TaskQueues.TranscribeFiles.TryAdd(f.FileName, 0))
+                {
+                    TaskQueues.TranscribeQueue.Enqueue(transcribeTask);
+                    Console.WriteLine($"Добавлена в очередь Transcribe задача {f.FileName}");
                 }
                 else
                 {
-                    session.Info.IncTranscribe();
-
-                    foreach (var f in task.Files)
-                        Base64FileHelper.WriteBase64ToFile(
-                            Path.Combine("transcriptions", f.FileName),
-                            f.Base64Content);
-
-                    File.Delete(Path.Combine("transcribe_segments",
-                        Path.ChangeExtension(task.SourceFileName, ".wav")));
+                    Console.WriteLine($"Transcribe задача {f.FileName} уже в очереди, пропуск");
                 }
-                break;
+            }
+
+            File.Delete(Path.Combine(
+                "extract_segments", task.SourceFileName));
         }
+        else // Transcribe
+        {
+            worker.Info.IncTranscribe();
+
+            foreach (var f in task.Files)
+            {
+                Base64FileHelper.WriteBase64ToFile(
+                    Path.Combine("transcriptions", f.FileName),
+                    f.Base64Content);
+            }
+
+            File.Delete(Path.Combine(
+                "transcribe_segments",
+                Path.ChangeExtension(task.SourceFileName, ".wav")));
+        }
+    }
+
+    private void HandleClientInput(ClientInputMessage msg)
+    {
+        Directory.CreateDirectory("input");
+
+        var path = Path.Combine("input", msg.File.FileName);
+
+        Base64FileHelper.WriteBase64ToFile(
+            path,
+            msg.File.Base64Content);
     }
 
     private async Task HeartbeatMonitor(CancellationToken ct)
@@ -108,13 +223,14 @@ class ManagerService
             lock (_workers)
             {
                 var dead = _workers
-                    .Where(w => (now - w.Info.LastHeartbeatUtc).TotalSeconds > 15)
+                    .Where(w => (now - w.Info.LastHeartbeatUtc)
+                                .TotalSeconds > 60)
                     .ToList();
 
-                foreach (var d in dead)
+                foreach (var w in dead)
                 {
-                    d.Info.Dispose();
-                    _workers.Remove(d);
+                    w.Info.Dispose();
+                    _workers.Remove(w);
                 }
             }
 
@@ -122,41 +238,68 @@ class ManagerService
         }
     }
 
-    private async Task InputLoop(CancellationToken ct)
+    private async Task HandleClientInputAsync(ClientInputMessage msg)
     {
-        while (!ct.IsCancellationRequested)
+        var inputPath = Path.Combine("input", msg.File.FileName);
+
+        Base64FileHelper.WriteBase64ToFile(
+            inputPath,
+            msg.File.Base64Content);
+
+        AudioSplitter.Split(
+            inputPath,
+            "extract_segments",
+            30,
+            3);
+
+        foreach (var seg in Directory.GetFiles("extract_segments"))
         {
-            foreach (var file in Directory.GetFiles("input", "*.wav"))
+            var fileName = Path.GetFileName(seg);
+
+            if (TaskQueues.ExtractFiles.TryAdd(fileName, 0))
             {
-                var name = Path.GetFileName(file);
-
-                AudioSplitter.Split(
-                    file,
-                    "extract_segments",
-                    30,
-                    0.8);
-
-                foreach (var seg in Directory.GetFiles("extract_segments"))
+                TaskQueues.ExtractQueue.Enqueue(new TaskMessage
                 {
-                    TaskQueues.ExtractQueue.Enqueue(new TaskMessage
+                    TaskType = TaskType.Extract,
+                    SourceFileName = fileName,
+                    Files =
                     {
-                        TaskType = TaskType.Extract,
-                        SourceFileName = Path.GetFileName(seg),
-                        Files = new List<FilePayload>
+                        new FilePayload
                         {
-                            new()
-                            {
-                                FileName = Path.GetFileName(seg),
-                                Base64Content = Base64FileHelper.ReadFileAsBase64(seg)
-                            }
+                            FileName = fileName,
+                            Base64Content = Base64FileHelper.ReadFileAsBase64(seg)
                         }
-                    });
-                }
+                    }
+                });
 
-                File.Delete(file);
+                Console.WriteLine($"Добавлена в очередь Extract задача {fileName}");
             }
-
-            await Task.Delay(1000, ct);
+            else
+            {
+                Console.WriteLine($"Extract задача {fileName} уже в очереди, пропуск");
+            }
         }
     }
+
+    private static void CleanDirectories(params string[] dirs)
+    {
+        foreach (var dir in dirs)
+        {
+            if (!Directory.Exists(dir))
+                continue;
+
+            foreach (var file in Directory.GetFiles(dir))
+            {
+                try
+                {
+                    File.Delete(file);
+                }
+                catch
+                {
+                    // если файл занят — значит жизнь сложнее, чем мы думали
+                }
+            }
+        }
+    }
+
 }

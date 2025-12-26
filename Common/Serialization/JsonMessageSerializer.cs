@@ -7,6 +7,8 @@ namespace Common.Serialization;
 
 public static class JsonMessageSerializer
 {
+    private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
     private static readonly JsonSerializerOptions Options = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -16,7 +18,7 @@ public static class JsonMessageSerializer
     public static byte[] Serialize(MessageBase message)
     {
         var json = JsonSerializer.Serialize(message, message.GetType(), Options);
-        return Encoding.UTF8.GetBytes(json);
+        return Utf8NoBom.GetBytes(json);
     }
 
     public static MessageBase Deserialize(ReadOnlySpan<byte> data)
@@ -40,10 +42,11 @@ public static class JsonMessageSerializer
             MessageType.ExtractTask or MessageType.TranscribeTask =>
                 JsonSerializer.Deserialize<TaskMessage>(json, Options)!,
 
-            MessageType.FileChunk =>
-                JsonSerializer.Deserialize<FileChunkMessage>(json, Options)!,
+            MessageType.ClientInput =>
+                JsonSerializer.Deserialize<ClientInputMessage>(json, Options)!,
 
-            _ => throw new InvalidOperationException($"Unknown message type {type}")
+            _ => throw new InvalidOperationException(
+                $"Unknown message type {type}")
         };
     }
 }

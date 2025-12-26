@@ -1,5 +1,5 @@
-﻿// Networking/TcpMessageWriter.cs
-using System.Net.Sockets;
+﻿using System.Net.Sockets;
+using System.Text;
 using Common.Messages;
 using Common.Serialization;
 
@@ -8,6 +8,7 @@ namespace Common.Networking;
 public sealed class TcpMessageWriter
 {
     private readonly NetworkStream _stream;
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
 
     public TcpMessageWriter(TcpClient client)
     {
@@ -16,14 +17,18 @@ public sealed class TcpMessageWriter
 
     public async Task SendAsync(MessageBase message, CancellationToken ct)
     {
-        foreach (var chunk in MessageFramer.Frame(message))
+        await _sendLock.WaitAsync(ct);
+        try
         {
-            var data = JsonMessageSerializer.Serialize(chunk);
-
+            var data = JsonMessageSerializer.Serialize(message);
             var lengthPrefix = BitConverter.GetBytes(data.Length);
 
             await _stream.WriteAsync(lengthPrefix, ct);
             await _stream.WriteAsync(data, ct);
+        }
+        finally
+        {
+            _sendLock.Release();
         }
     }
 }

@@ -57,23 +57,17 @@ class MainViewModel : ObservableObject
     {
         await _client.ConnectAsync();
 
-        var msg = new TaskMessage
+        var msg = new ClientInputMessage
         {
-            TaskType = TaskType.Extract,
-            SourceFileName = Path.GetFileName(_selectedFile),
-            Files =
+            File = new FilePayload
             {
-                new FilePayload
-                {
-                    FileName = Path.GetFileName(_selectedFile),
-                    Base64Content =
-                        Base64FileHelper.ReadFileAsBase64(_selectedFile)
-                }
+                FileName = Path.GetFileName(_selectedFile),
+                Base64Content = Base64FileHelper.ReadFileAsBase64(_selectedFile)
             }
         };
 
         await _client.SendAsync(msg);
-        AppendLog("Task sent to manager");
+        AppendLog("File sent to manager");
     }
 
     private void OnTranscriptionReceived(string name, string text)

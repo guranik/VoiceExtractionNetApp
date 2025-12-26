@@ -1,14 +1,18 @@
-﻿// WorkerState.cs
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
+using System.Threading.Channels;
 
 class WorkerState
 {
-    public List<PythonWorker> ExtractWorkers { get; } = new();
-    public List<PythonWorker> TranscribeWorkers { get; } = new();
+    public Channel<PythonWorker> ExtractPool { get; set; } = null!;
+    public Channel<PythonWorker> TranscribePool { get; set; } = null!;
+
+    public List<PythonWorker> AllWorkers { get; } = new();
 
     public void DisposeAll()
     {
-        ExtractWorkers.Clear();
-        TranscribeWorkers.Clear();
+        foreach (var w in AllWorkers)
+            w.Dispose();
+
+        AllWorkers.Clear();
     }
 }

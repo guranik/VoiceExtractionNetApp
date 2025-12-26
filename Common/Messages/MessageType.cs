@@ -1,5 +1,4 @@
-﻿// Messages/MessageType.cs
-namespace Common.Messages;
+﻿namespace Common.Messages;
 
 public enum MessageType
 {
@@ -11,5 +10,7 @@ public enum MessageType
     TranscribeTask,
 
     FileChunk,
-    CancelTask
+    CancelTask,
+
+    ClientInput
 }

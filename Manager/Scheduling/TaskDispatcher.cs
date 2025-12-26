@@ -16,8 +16,11 @@ class TaskDispatcher
 
     public async Task RunAsync(CancellationToken ct)
     {
+
         _ = Task.Run(() => DispatchExtract(ct), ct);
         _ = Task.Run(() => DispatchTranscribe(ct), ct);
+
+        Console.WriteLine("Диспетчеры задач запущены.");
     }
 
     private async Task DispatchExtract(CancellationToken ct)
@@ -28,9 +31,10 @@ class TaskDispatcher
             {
                 if (!TaskQueues.ExtractQueue.TryDequeue(out var task))
                     break;
-
                 w.Info.DecExtract();
                 await w.SendAsync(task, ct);
+
+                Console.WriteLine($"Задача Extract отправлена воркеркеру.");
             }
 
             await Task.Delay(50, ct);
@@ -43,11 +47,14 @@ class TaskDispatcher
         {
             foreach (var w in _workers.Where(w => w.Info.FreeTranscribe > 0))
             {
+
                 if (!TaskQueues.TranscribeQueue.TryDequeue(out var task))
                     break;
 
                 w.Info.DecTranscribe();
                 await w.SendAsync(task, ct);
+
+                Console.WriteLine($"Задача Transcribe отправлена воркеру. Осталось свободных потоков: {w.Info.FreeTranscribe}.");
             }
 
             await Task.Delay(50, ct);
