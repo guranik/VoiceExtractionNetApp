@@ -10,37 +10,39 @@ using Common.Messages;
 using Common.Models;
 using Common.Utils;
 using Common.Networking;
-using System.Data;
 
 class ManagerService
 {
-    private const int Port = 5000;
-
-    private readonly WorkerListener _listener = new(Port);
+    private readonly ManagerConfig _config;
+    private readonly WorkerListener _listener;
 
     private readonly List<WorkerSession> _workers = new();
+    private readonly ConcurrentQueue<(TcpClient client, MessageBase msg)> _incoming = new();
 
-    private readonly ConcurrentQueue<(TcpClient client, MessageBase msg)>
-        _incoming = new();
+    public ManagerService(ManagerConfig config)
+    {
+        _config = config;
+        _listener = new WorkerListener(config.Network.ManagerPort);
+    }
 
     public async Task RunAsync(CancellationToken ct)
     {
         CleanDirectories(
-            "input",
-            "extract_segments",
-            "transcribe_segments",
-            "transcriptions"
+            _config.Directories.Input,
+            _config.Directories.ExtractSegments,
+            _config.Directories.TranscribeSegments,
+            _config.Directories.Transcriptions
         );
 
         _listener.Start();
 
         var tasks = new[]
         {
-        AcceptLoop(ct),
-        MessageDispatcher(ct),
-        HeartbeatMonitor(ct),
-        new TaskDispatcher(_workers).RunAsync(ct)
-    };
+            AcceptLoop(ct),
+            MessageDispatcher(ct),
+            HeartbeatMonitor(ct),
+            new TaskDispatcher(_workers).RunAsync(ct)
+        };
 
         await Task.WhenAll(tasks);
     }
@@ -63,13 +65,11 @@ class ManagerService
             while (!ct.IsCancellationRequested)
             {
                 var msg = await reader.ReadAsync(ct);
-                if (msg == null)
-                    continue;
-
-                _incoming.Enqueue((client, msg));
+                if (msg != null)
+                    _incoming.Enqueue((client, msg));
             }
         }
-        catch(Exception ex)
+        catch
         {
             client.Close();
         }
@@ -80,9 +80,7 @@ class ManagerService
         while (!ct.IsCancellationRequested)
         {
             while (_incoming.TryDequeue(out var item))
-            {
                 await HandleIncoming(item.client, item.msg, ct);
-            }
 
             await Task.Delay(5, ct);
         }
@@ -96,22 +94,18 @@ class ManagerService
         switch (msg)
         {
             case WorkerHelloMessage hello:
-                Console.WriteLine($"Получено сообщение: {hello.Type}");
                 await RegisterWorker(client, hello, ct);
                 break;
 
             case HeartBeatMessage:
-                Console.WriteLine($"HeartBeat");
                 GetWorker(client)?.Info.UpdateHeartbeat();
                 break;
 
             case TaskMessage task:
-                Console.WriteLine($"Получено сообщение: {task.Type}");
                 await HandleWorkerTask(task, client);
                 break;
 
             case ClientInputMessage input:
-                Console.WriteLine($"Получено сообщение от клиента");
                 await HandleClientInputAsync(input);
                 break;
         }
@@ -119,7 +113,9 @@ class ManagerService
 
     private async Task HandleClientInputAsync(ClientInputMessage msg)
     {
-        var inputPath = Path.Combine("input", msg.File.FileName);
+        var inputPath = Path.Combine(
+            _config.Directories.Input,
+            msg.File.FileName);
 
         Base64FileHelper.WriteBase64ToFile(
             inputPath,
@@ -127,11 +123,11 @@ class ManagerService
 
         AudioSplitter.Split(
             inputPath,
-            "extract_segments",
-            30,
-            3);
+            _config.Directories.ExtractSegments,
+            _config.AudioSplitter.MaxExtractSegmentDurationSec,
+            _config.AudioSplitter.ExtractTranscribeEfficiency);
 
-        foreach (var seg in Directory.GetFiles("extract_segments"))
+        foreach (var seg in Directory.GetFiles(_config.Directories.ExtractSegments))
         {
             var fileName = Path.GetFileName(seg);
 
@@ -148,8 +144,6 @@ class ManagerService
                     }
                 }
             });
-
-            Console.WriteLine($"Добавлена в очередь Extract задача {fileName}");
         }
     }
 
@@ -163,36 +157,37 @@ class ManagerService
 
             foreach (var f in task.Files)
             {
-                var segmentPath = Path.Combine("transcribe_segments", f.FileName);
+                var segmentPath = Path.Combine(
+                    _config.Directories.TranscribeSegments,
+                    f.FileName);
+
                 Base64FileHelper.WriteBase64ToFile(segmentPath, f.Base64Content);
 
-                var transcribeTask = new TaskMessage
+                TaskQueues.TranscribeQueue.Enqueue(new TaskMessage
                 {
                     TaskType = TaskType.Transcribe,
                     SourceFileName = f.FileName,
-                    Files = new List<FilePayload> { f }
-                };
-
-                TaskQueues.TranscribeQueue.Enqueue(transcribeTask);
-                Console.WriteLine($"Добавлена в очередь Transcribe задача {f.FileName}");
+                    Files = { f }
+                });
             }
 
             File.Delete(Path.Combine(
-                "extract_segments", task.SourceFileName));
+                _config.Directories.ExtractSegments,
+                task.SourceFileName));
         }
-        else // Transcribe
+        else
         {
             worker.Info.IncTranscribe();
 
             foreach (var f in task.Files)
             {
                 Base64FileHelper.WriteBase64ToFile(
-                    Path.Combine("transcriptions", f.FileName),
+                    Path.Combine(_config.Directories.Transcriptions, f.FileName),
                     f.Base64Content);
             }
 
             File.Delete(Path.Combine(
-                "transcribe_segments",
+                _config.Directories.TranscribeSegments,
                 Path.ChangeExtension(task.SourceFileName, ".wav")));
         }
     }
@@ -220,10 +215,6 @@ class ManagerService
         {
             AckedMessageId = hello.MessageId
         }, ct);
-
-        Console.WriteLine(
-            $"Worker registered: extract={hello.ExtractThreads}, " +
-            $"transcribe={hello.TranscribeThreads}");
     }
 
     private WorkerSession GetWorker(TcpClient client)
@@ -242,7 +233,7 @@ class ManagerService
             {
                 var dead = _workers
                     .Where(w => (now - w.Info.LastHeartbeatUtc)
-                                .TotalSeconds > 60)
+                        .TotalSeconds > _config.Heartbeat.WorkerTimeoutSec)
                     .ToList();
 
                 foreach (var w in dead)
@@ -252,7 +243,9 @@ class ManagerService
                 }
             }
 
-            await Task.Delay(3000, ct);
+            await Task.Delay(
+                _config.Heartbeat.MonitorIntervalMs,
+                ct);
         }
     }
 
@@ -265,13 +258,7 @@ class ManagerService
 
             foreach (var file in Directory.GetFiles(dir))
             {
-                try
-                {
-                    File.Delete(file);
-                }
-                catch
-                {
-                }
+                try { File.Delete(file); } catch { }
             }
         }
     }

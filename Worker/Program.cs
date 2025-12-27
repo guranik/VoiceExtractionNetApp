@@ -4,13 +4,14 @@ using System.Threading.Tasks;
 
 class Program
 {
-    static async Task Main(string[] args)
+    static async Task Main()
     {
         Console.Title = "Worker";
 
         try
         {
-            DirectoryValidator.ValidateWorkerEnvironment();
+            var config = WorkerConfiguration.Load("configuration.json");
+            DirectoryValidator.Validate(config);
 
             var cts = new CancellationTokenSource();
             Console.CancelKeyPress += (_, e) =>
@@ -19,12 +20,12 @@ class Program
                 cts.Cancel();
             };
 
-            var worker = new WorkerService();
+            var worker = new WorkerService(config);
             await worker.RunAsync(cts.Token);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[ERROR]{ex.ToString()}");
+            Console.WriteLine($"[ERROR] {ex}");
         }
     }
 }

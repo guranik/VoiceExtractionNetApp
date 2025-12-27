@@ -2,12 +2,12 @@
 
 static class DirectoryValidator
 {
-    public static void ValidateManagerEnvironment()
+    public static void ValidateManagerEnvironment(ManagerConfig config)
     {
-        Ensure("input");
-        Ensure("extract_segments");
-        Ensure("transcribe_segments");
-        Ensure("transcriptions");
+        Ensure(config.Directories.Input);
+        Ensure(config.Directories.ExtractSegments);
+        Ensure(config.Directories.TranscribeSegments);
+        Ensure(config.Directories.Transcriptions);
     }
 
     private static void Ensure(string dir)

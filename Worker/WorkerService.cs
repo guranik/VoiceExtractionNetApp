@@ -10,17 +10,21 @@ using Common.Utils;
 
 class WorkerService
 {
-    private const string ManagerIp = "127.0.0.1";
-    private const int ManagerPort = 5000;
-
+    private readonly WorkerConfiguration _cfg;
     private readonly WorkerState _state = new();
     private ManagerConnection _connection = null!;
     private readonly Channel<TaskMessage> _taskQueue =
         Channel.CreateUnbounded<TaskMessage>();
 
+    public WorkerService(WorkerConfiguration cfg)
+    {
+        _cfg = cfg;
+    }
+
     public async Task RunAsync(CancellationToken ct)
     {
         CleanWorkingDirectories();
+
         await InitializeWorkersAsync(ct);
         await ConnectAsync(ct);
 
@@ -37,20 +41,15 @@ class WorkerService
 
     private async Task InitializeWorkersAsync(CancellationToken ct)
     {
-        const int extract = 1;
-        const int transcribe = 3;
+        var extractPool = Channel.CreateBounded<PythonWorker>(_cfg.Workers.ExtractCount);
+        var transcribePool = Channel.CreateBounded<PythonWorker>(_cfg.Workers.TranscribeCount);
 
-        var extractPool = Channel.CreateBounded<PythonWorker>(extract);
-        var transcribePool = Channel.CreateBounded<PythonWorker>(transcribe);
-
-        string root = Directory.GetCurrentDirectory();
-
-        for (int i = 0; i < extract; i++)
+        for (int i = 0; i < _cfg.Workers.ExtractCount; i++)
         {
             var w = new PythonWorker(
-                @"C:\Projects\VoiceExtraction\speech_extractor.py",
-                "extract_segments",
-                "transcribe_segments",
+                _cfg.PythonScripts.Extractor,
+                _cfg.Directories.Extract,
+                _cfg.Directories.Transcribe,
                 i);
 
             _state.AllWorkers.Add(w);
@@ -58,12 +57,12 @@ class WorkerService
             await extractPool.Writer.WriteAsync(w, ct);
         }
 
-        for (int i = 0; i < transcribe; i++)
+        for (int i = 0; i < _cfg.Workers.TranscribeCount; i++)
         {
             var w = new PythonWorker(
-                @"C:\Projects\VoiceExtraction\speech_transcriptor.py",
-                "transcribe_segments",
-                "transcriptions",
+                _cfg.PythonScripts.Transcriptor,
+                _cfg.Directories.Transcribe,
+                _cfg.Directories.Results,
                 i);
 
             _state.AllWorkers.Add(w);
@@ -80,29 +79,27 @@ class WorkerService
     private async Task ConnectAsync(CancellationToken ct)
     {
         _connection = new ManagerConnection();
-        await _connection.ConnectAsync(ManagerIp, ManagerPort, ct);
+        await _connection.ConnectAsync(_cfg.Manager.Ip, _cfg.Manager.Port, ct);
 
         await _connection.SendAsync(new WorkerHelloMessage
         {
-            ExtractThreads = _state.ExtractPool.Reader.Count,
-            TranscribeThreads = _state.TranscribePool.Reader.Count
+            ExtractThreads = _cfg.Workers.ExtractCount,
+            TranscribeThreads = _cfg.Workers.TranscribeCount
         }, ct);
     }
 
     private async Task DispatcherLoop(CancellationToken ct)
     {
         await foreach (var task in _taskQueue.Reader.ReadAllAsync(ct))
-        {
             _ = Task.Run(() => HandleTask(task, ct), ct);
-        }
     }
 
     private async Task HandleTask(TaskMessage task, CancellationToken ct)
     {
         if (task.TaskType == TaskType.Extract)
-            await Process(task, _state.ExtractPool, "extract_segments", ct);
+            await Process(task, _state.ExtractPool, _cfg.Directories.Extract, ct);
         else
-            await Process(task, _state.TranscribePool, "transcribe_segments", ct);
+            await Process(task, _state.TranscribePool, _cfg.Directories.Transcribe, ct);
     }
 
     private async Task Process(
@@ -122,14 +119,13 @@ class WorkerService
 
             var produced = await worker.SendTask(task.SourceFileName);
 
+            var outputDir = task.TaskType == TaskType.Extract
+                ? _cfg.Directories.Transcribe
+                : _cfg.Directories.Results;
+
             var payload = produced.Select(f =>
             {
-                var path = Path.Combine(
-                    task.TaskType == TaskType.Extract
-                        ? "transcribe_segments"
-                        : "transcriptions",
-                    $"{worker.ThreadIndex}_{f}");
-
+                var path = Path.Combine(outputDir, $"{worker.ThreadIndex}_{f}");
                 return new FilePayload
                 {
                     FileName = f,
@@ -145,15 +141,7 @@ class WorkerService
             }, ct);
 
             foreach (var f in produced)
-            {
-                var path = Path.Combine(
-                    task.TaskType == TaskType.Extract
-                        ? "transcribe_segments"
-                        : "transcriptions",
-                    $"{worker.ThreadIndex}_{f}");
-
-                TryDelete(path);
-            }
+                TryDelete(Path.Combine(outputDir, $"{worker.ThreadIndex}_{f}"));
         }
         finally
         {
@@ -165,7 +153,7 @@ class WorkerService
     {
         while (!ct.IsCancellationRequested)
         {
-            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+            await Task.Delay(TimeSpan.FromSeconds(_cfg.HeartbeatSeconds), ct);
             await _connection.SendAsync(new HeartBeatMessage(), ct);
         }
     }
@@ -183,13 +171,13 @@ class WorkerService
         }
     }
 
-    private static void CleanWorkingDirectories()
+    private void CleanWorkingDirectories()
     {
         foreach (var dir in new[]
         {
-            "extract_segments",
-            "transcribe_segments",
-            "transcriptions"
+            _cfg.Directories.Extract,
+            _cfg.Directories.Transcribe,
+            _cfg.Directories.Results
         })
         {
             Directory.CreateDirectory(dir);

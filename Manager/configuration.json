@@ -1,0 +1,22 @@
+{
+  "Network": {
+    "ManagerPort": 5000
+  },
+
+  "Directories": {
+    "Input": "input",
+    "ExtractSegments": "extract_segments",
+    "TranscribeSegments": "transcribe_segments",
+    "Transcriptions": "transcriptions"
+  },
+
+  "AudioSplitter": {
+    "MaxExtractSegmentDurationSec": 30,
+    "ExtractTranscribeEfficiency": 3
+  },
+
+  "Heartbeat": {
+    "WorkerTimeoutSec": 60,
+    "MonitorIntervalMs": 3000
+  }
+}

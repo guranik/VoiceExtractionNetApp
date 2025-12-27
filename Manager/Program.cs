@@ -10,7 +10,9 @@ class Program
 
         try
         {
-            DirectoryValidator.ValidateManagerEnvironment();
+            var config = ManagerConfig.Load("configuration.json");
+
+            DirectoryValidator.ValidateManagerEnvironment(config);
 
             using var cts = new CancellationTokenSource();
             Console.CancelKeyPress += (_, e) =>
@@ -19,12 +21,12 @@ class Program
                 cts.Cancel();
             };
 
-            var manager = new ManagerService();
+            var manager = new ManagerService(config);
             await manager.RunAsync(cts.Token);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[ERROR] {ex.ToString()}");
+            Console.WriteLine($"[ERROR] {ex}");
         }
     }
 }

@@ -1,18 +1,15 @@
-﻿using System;
-using System.IO;
+﻿using System.IO;
 
 static class DirectoryValidator
 {
-    public static void ValidateWorkerEnvironment()
+    public static void Validate(WorkerConfiguration cfg)
     {
-        string root = Directory.GetCurrentDirectory();
+        EnsureDir(cfg.Directories.Extract);
+        EnsureDir(cfg.Directories.Transcribe);
+        EnsureDir(cfg.Directories.Results);
 
-        EnsureDir(Path.Combine(root, "extract_segments"));
-        EnsureDir(Path.Combine(root, "transcribe_segments"));
-        EnsureDir(Path.Combine(root, "transcriptions"));
-
-        EnsureFile(@"C:\Projects\VoiceExtraction\speech_extractor.py");
-        EnsureFile(@"C:\Projects\VoiceExtraction\speech_transcriptor.py");
+        EnsureFile(cfg.PythonScripts.Extractor);
+        EnsureFile(cfg.PythonScripts.Transcriptor);
     }
 
     private static void EnsureDir(string path)

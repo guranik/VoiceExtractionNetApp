@@ -1,0 +1,24 @@
+{
+  "Manager": {
+    "Ip": "127.0.0.1",
+    "Port": 5000
+  },
+
+  "Directories": {
+    "Extract": "extract_segments",
+    "Transcribe": "transcribe_segments",
+    "Results": "transcriptions"
+  },
+
+  "PythonScripts": {
+    "Extractor": "C:\\Projects\\VoiceExtraction\\speech_extractor.py",
+    "Transcriptor": "C:\\Projects\\VoiceExtraction\\speech_transcriptor.py"
+  },
+
+  "Workers": {
+    "ExtractCount": 1,
+    "TranscribeCount": 3
+  },
+
+  "HeartbeatSeconds": 5
+}
