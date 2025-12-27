@@ -1,5 +1,4 @@
-﻿// Utils/Base64FileHelper.cs
-namespace Common.Utils;
+﻿namespace Common.Utils;
 
 public static class Base64FileHelper
 {

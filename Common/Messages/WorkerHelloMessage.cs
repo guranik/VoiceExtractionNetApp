@@ -1,5 +1,4 @@
-﻿// Messages/WorkerHelloMessage.cs
-namespace Common.Messages;
+﻿namespace Common.Messages;
 
 public sealed class WorkerHelloMessage : MessageBase
 {

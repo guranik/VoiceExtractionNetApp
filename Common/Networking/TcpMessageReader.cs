@@ -15,7 +15,6 @@ public sealed class TcpMessageReader
 
     public async Task<MessageBase> ReadAsync(CancellationToken ct)
     {
-        // Сначала читаем 4 байта длины
         var lengthBuffer = new byte[4];
         await _stream.ReadExactlyAsync(lengthBuffer, ct);
 
@@ -24,7 +23,6 @@ public sealed class TcpMessageReader
         var data = new byte[length];
         await _stream.ReadExactlyAsync(data, ct);
 
-        // Десериализация целого сообщения сразу
         return JsonMessageSerializer.Deserialize(data);
     }
 }

@@ -183,7 +183,6 @@ class WorkerService
         }
     }
 
-
     private static void CleanWorkingDirectories()
     {
         foreach (var dir in new[]

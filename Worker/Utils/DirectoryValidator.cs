@@ -1,5 +1,4 @@
-﻿// Utils/DirectoryValidator.cs
-using System;
+﻿using System;
 using System.IO;
 
 static class DirectoryValidator

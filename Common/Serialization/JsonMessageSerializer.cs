@@ -1,5 +1,4 @@
-﻿// Serialization/JsonMessageSerializer.cs
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using Common.Messages;
 

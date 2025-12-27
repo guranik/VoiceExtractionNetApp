@@ -117,6 +117,86 @@ class ManagerService
         }
     }
 
+    private async Task HandleClientInputAsync(ClientInputMessage msg)
+    {
+        var inputPath = Path.Combine("input", msg.File.FileName);
+
+        Base64FileHelper.WriteBase64ToFile(
+            inputPath,
+            msg.File.Base64Content);
+
+        AudioSplitter.Split(
+            inputPath,
+            "extract_segments",
+            30,
+            3);
+
+        foreach (var seg in Directory.GetFiles("extract_segments"))
+        {
+            var fileName = Path.GetFileName(seg);
+
+            TaskQueues.ExtractQueue.Enqueue(new TaskMessage
+            {
+                TaskType = TaskType.Extract,
+                SourceFileName = fileName,
+                Files =
+                {
+                    new FilePayload
+                    {
+                        FileName = fileName,
+                        Base64Content = Base64FileHelper.ReadFileAsBase64(seg)
+                    }
+                }
+            });
+
+            Console.WriteLine($"Добавлена в очередь Extract задача {fileName}");
+        }
+    }
+
+    private async Task HandleWorkerTask(TaskMessage task, TcpClient client)
+    {
+        var worker = _workers.First(w => w.Info.Client == client);
+
+        if (task.TaskType == TaskType.Extract)
+        {
+            worker.Info.IncExtract();
+
+            foreach (var f in task.Files)
+            {
+                var segmentPath = Path.Combine("transcribe_segments", f.FileName);
+                Base64FileHelper.WriteBase64ToFile(segmentPath, f.Base64Content);
+
+                var transcribeTask = new TaskMessage
+                {
+                    TaskType = TaskType.Transcribe,
+                    SourceFileName = f.FileName,
+                    Files = new List<FilePayload> { f }
+                };
+
+                TaskQueues.TranscribeQueue.Enqueue(transcribeTask);
+                Console.WriteLine($"Добавлена в очередь Transcribe задача {f.FileName}");
+            }
+
+            File.Delete(Path.Combine(
+                "extract_segments", task.SourceFileName));
+        }
+        else // Transcribe
+        {
+            worker.Info.IncTranscribe();
+
+            foreach (var f in task.Files)
+            {
+                Base64FileHelper.WriteBase64ToFile(
+                    Path.Combine("transcriptions", f.FileName),
+                    f.Base64Content);
+            }
+
+            File.Delete(Path.Combine(
+                "transcribe_segments",
+                Path.ChangeExtension(task.SourceFileName, ".wav")));
+        }
+    }
+
     private async Task RegisterWorker(
         TcpClient client,
         WorkerHelloMessage hello,
@@ -152,68 +232,6 @@ class ManagerService
             return _workers.FirstOrDefault(w => w.Info.Client == client);
     }
 
-    private async Task HandleWorkerTask(TaskMessage task, TcpClient client)
-    {
-        var worker = _workers.First(w => w.Info.Client == client);
-
-        if (task.TaskType == TaskType.Extract)
-        {
-            worker.Info.IncExtract();
-
-            foreach (var f in task.Files)
-            {
-                var segmentPath = Path.Combine("transcribe_segments", f.FileName);
-                Base64FileHelper.WriteBase64ToFile(segmentPath, f.Base64Content);
-
-                var transcribeTask = new TaskMessage
-                {
-                    TaskType = TaskType.Transcribe,
-                    SourceFileName = f.FileName,
-                    Files = new List<FilePayload> { f }
-                };
-
-                if (TaskQueues.TranscribeFiles.TryAdd(f.FileName, 0))
-                {
-                    TaskQueues.TranscribeQueue.Enqueue(transcribeTask);
-                    Console.WriteLine($"Добавлена в очередь Transcribe задача {f.FileName}");
-                }
-                else
-                {
-                    Console.WriteLine($"Transcribe задача {f.FileName} уже в очереди, пропуск");
-                }
-            }
-
-            File.Delete(Path.Combine(
-                "extract_segments", task.SourceFileName));
-        }
-        else // Transcribe
-        {
-            worker.Info.IncTranscribe();
-
-            foreach (var f in task.Files)
-            {
-                Base64FileHelper.WriteBase64ToFile(
-                    Path.Combine("transcriptions", f.FileName),
-                    f.Base64Content);
-            }
-
-            File.Delete(Path.Combine(
-                "transcribe_segments",
-                Path.ChangeExtension(task.SourceFileName, ".wav")));
-        }
-    }
-
-    private void HandleClientInput(ClientInputMessage msg)
-    {
-        Directory.CreateDirectory("input");
-
-        var path = Path.Combine("input", msg.File.FileName);
-
-        Base64FileHelper.WriteBase64ToFile(
-            path,
-            msg.File.Base64Content);
-    }
-
     private async Task HeartbeatMonitor(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -238,49 +256,6 @@ class ManagerService
         }
     }
 
-    private async Task HandleClientInputAsync(ClientInputMessage msg)
-    {
-        var inputPath = Path.Combine("input", msg.File.FileName);
-
-        Base64FileHelper.WriteBase64ToFile(
-            inputPath,
-            msg.File.Base64Content);
-
-        AudioSplitter.Split(
-            inputPath,
-            "extract_segments",
-            30,
-            3);
-
-        foreach (var seg in Directory.GetFiles("extract_segments"))
-        {
-            var fileName = Path.GetFileName(seg);
-
-            if (TaskQueues.ExtractFiles.TryAdd(fileName, 0))
-            {
-                TaskQueues.ExtractQueue.Enqueue(new TaskMessage
-                {
-                    TaskType = TaskType.Extract,
-                    SourceFileName = fileName,
-                    Files =
-                    {
-                        new FilePayload
-                        {
-                            FileName = fileName,
-                            Base64Content = Base64FileHelper.ReadFileAsBase64(seg)
-                        }
-                    }
-                });
-
-                Console.WriteLine($"Добавлена в очередь Extract задача {fileName}");
-            }
-            else
-            {
-                Console.WriteLine($"Extract задача {fileName} уже в очереди, пропуск");
-            }
-        }
-    }
-
     private static void CleanDirectories(params string[] dirs)
     {
         foreach (var dir in dirs)
@@ -296,10 +271,8 @@ class ManagerService
                 }
                 catch
                 {
-                    // если файл занят — значит жизнь сложнее, чем мы думали
                 }
             }
         }
     }
-
 }
