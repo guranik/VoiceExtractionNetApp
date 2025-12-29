@@ -29,6 +29,20 @@ class MainViewModel : ObservableObject
     public ICommand SelectFileCommand { get; }
     public ICommand SendCommand { get; }
 
+    private double _extractProgress;
+    public double ExtractProgress
+    {
+        get => _extractProgress;
+        set => Set(ref _extractProgress, value);
+    }
+
+    private double _transcribeProgress;
+    public double TranscribeProgress
+    {
+        get => _transcribeProgress;
+        set => Set(ref _transcribeProgress, value);
+    }
+
     public MainViewModel()
     {
         SelectFileCommand = new RelayCommand(SelectFile);
@@ -36,6 +50,7 @@ class MainViewModel : ObservableObject
 
         _client.OnLog += AppendLog;
         _client.OnTranscription += OnTranscriptionReceived;
+        _client.OnProgress += OnProgressReceived;
     }
 
     private void SelectFile()
@@ -74,6 +89,23 @@ class MainViewModel : ObservableObject
     {
         File.WriteAllText($"{name}.txt", text);
         AppendLog($"Transcription saved: {name}.txt");
+    }
+
+    private void OnProgressReceived(ClientProgressMessage msg)
+    {
+        App.Current.Dispatcher.Invoke(() =>
+        {
+            ExtractProgress = msg.InputFileDuration > 0
+                ? (double)msg.LatestExtractSegmenStart / msg.InputFileDuration
+                : 0;
+
+            TranscribeProgress = msg.TotalTranscribeSegments > 0
+                ? (double)msg.TotalTranscriptions / msg.TotalTranscribeSegments
+                : 0;
+
+            AppendLog(
+                $"Progress: extract {ExtractProgress:P0}, transcribe {TranscribeProgress:P0}");
+        });
     }
 
     private void AppendLog(string msg)

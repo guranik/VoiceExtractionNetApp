@@ -12,5 +12,6 @@ public enum MessageType
     FileChunk,
     CancelTask,
 
-    ClientInput
+    ClientInput,
+    ClientProgress
 }

@@ -63,4 +63,34 @@ static class AudioSplitter
 
         return true;
     }
+
+    public static int GetLatestExtractSegmentStartSec(string extractDir, string inputFile)
+    {
+        if (!Directory.Exists(extractDir))
+            return 0;
+
+        var files = Directory.GetFiles(extractDir);
+        if (files.Length == 0)
+            return inputFile != null
+                ? GetInputDurationSec(inputFile)
+                : 0;
+
+        var file = Directory.GetFiles(extractDir)
+            .OrderBy(f => f)
+            .FirstOrDefault();
+
+        if (file == null)
+            return 0;
+
+        var name = Path.GetFileNameWithoutExtension(file);
+        var parts = name.Split('-').Select(int.Parse).ToArray();
+
+        return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }
+
+    public static int GetInputDurationSec(string inputFile)
+    {
+        using var reader = new AudioFileReader(inputFile);
+        return (int)reader.TotalTime.TotalSeconds;
+    }
 }

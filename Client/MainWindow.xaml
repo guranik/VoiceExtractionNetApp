@@ -21,9 +21,32 @@
                     IsEnabled="{Binding CanSend}"/>
         </StackPanel>
 
-        <TextBox Grid.Row="1"
+        <Grid Grid.Row="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="25"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Height="20" Margin="0,0,0,5">
+                <ProgressBar
+                    Minimum="0"
+                    Maximum="1"
+                    Value="{Binding ExtractProgress}"
+                    Foreground="IndianRed"
+                    Background="#33000000"/>
+
+                <ProgressBar
+                    Minimum="0"
+                    Maximum="1"
+                    Value="{Binding TranscribeProgress}"
+                    Foreground="DodgerBlue"
+                    Background="Transparent"/>
+                    </Grid>
+
+            <TextBox Grid.Row="1"
                  Text="{Binding Log}"
                  IsReadOnly="True"
                  VerticalScrollBarVisibility="Auto"/>
+        </Grid>
     </Grid>
 </Window>

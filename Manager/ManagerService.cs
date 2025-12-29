@@ -15,6 +15,7 @@ class ManagerService
 {
     private readonly ManagerConfig _config;
     private readonly WorkerListener _listener;
+    private TcpClient _currentClient;
 
     private readonly List<WorkerSession> _workers = new();
     private readonly ConcurrentQueue<(TcpClient client, MessageBase msg)> _incoming = new();
@@ -106,6 +107,7 @@ class ManagerService
                 break;
 
             case ClientInputMessage input:
+                _currentClient = client;
                 await HandleClientInputAsync(input);
                 break;
         }
@@ -145,6 +147,8 @@ class ManagerService
                 }
             });
         }
+
+        SendClientProgress();
     }
 
     private async Task HandleWorkerTask(TaskMessage task, TcpClient client)
@@ -163,6 +167,8 @@ class ManagerService
 
                 Base64FileHelper.WriteBase64ToFile(segmentPath, f.Base64Content);
 
+                TaskQueues.AddExtract(f.FileName);
+
                 TaskQueues.TranscribeQueue.Enqueue(new TaskMessage
                 {
                     TaskType = TaskType.Transcribe,
@@ -174,6 +180,8 @@ class ManagerService
             File.Delete(Path.Combine(
                 _config.Directories.ExtractSegments,
                 task.SourceFileName));
+
+            SendClientProgress();
         }
         else
         {
@@ -184,12 +192,45 @@ class ManagerService
                 Base64FileHelper.WriteBase64ToFile(
                     Path.Combine(_config.Directories.Transcriptions, f.FileName),
                     f.Base64Content);
+
+                TaskQueues.AddTranscribe(f.FileName);
             }
 
             File.Delete(Path.Combine(
                 _config.Directories.TranscribeSegments,
                 Path.ChangeExtension(task.SourceFileName, ".wav")));
+
+            SendClientProgress();
         }
+    }
+
+    private void SendClientProgress()
+    {
+        if (_currentClient == null || !_currentClient.Connected)
+            return;
+
+        var writer = new TcpMessageWriter(_currentClient);
+
+        var inputFile = Directory
+            .GetFiles(_config.Directories.Input)
+            .FirstOrDefault();
+
+        var latest = AudioSplitter.GetLatestExtractSegmentStartSec(
+            _config.Directories.ExtractSegments, inputFile);
+
+        var duration = inputFile != null
+            ? AudioSplitter.GetInputDurationSec(inputFile)
+            : 0;
+
+        var msg = new ClientProgressMessage
+        {
+            LatestExtractSegmenStart = latest,
+            InputFileDuration = duration,
+            TotalTranscribeSegments = TaskQueues.ExtractFiles.Count,
+            TotalTranscriptions = TaskQueues.TranscribeFiles.Count
+        };
+
+        _ = writer.SendAsync(msg, CancellationToken.None);
     }
 
     private async Task RegisterWorker(

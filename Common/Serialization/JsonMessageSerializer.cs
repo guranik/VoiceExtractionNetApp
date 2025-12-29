@@ -44,6 +44,9 @@ public static class JsonMessageSerializer
             MessageType.ClientInput =>
                 JsonSerializer.Deserialize<ClientInputMessage>(json, Options)!,
 
+            MessageType.ClientProgress =>
+                JsonSerializer.Deserialize<ClientProgressMessage>(json, Options)!,
+
             _ => throw new InvalidOperationException(
                 $"Unknown message type {type}")
         };

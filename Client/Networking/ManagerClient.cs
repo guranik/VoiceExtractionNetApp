@@ -17,6 +17,7 @@ class ManagerClient : IDisposable
 
     public event Action<string> OnLog;
     public event Action<string, string> OnTranscription;
+    public event Action<ClientProgressMessage> OnProgress;
 
     public async Task ConnectAsync()
     {
@@ -38,25 +39,38 @@ class ManagerClient : IDisposable
 
     private async Task ReadLoop()
     {
-        while (!_cts.IsCancellationRequested)
+        try
         {
-            var msg = await _reader.ReadAsync(_cts.Token);
-            if (msg == null)
-                continue;
-
-            if (msg is TaskMessage task &&
-                task.TaskType == TaskType.Transcribe)
+            while (!_cts.IsCancellationRequested)
             {
-                foreach (var f in task.Files)
-                {
-                    var text = Encoding.UTF8.GetString(
-                        Convert.FromBase64String(f.Base64Content));
+                var msg = await _reader.ReadAsync(_cts.Token);
+                if (msg == null)
+                    break;
 
-                    OnTranscription?.Invoke(f.FileName, text);
+                switch (msg)
+                {
+                    case TaskMessage task when task.TaskType == TaskType.Transcribe:
+                        foreach (var f in task.Files)
+                        {
+                            var text = Encoding.UTF8.GetString(
+                                Convert.FromBase64String(f.Base64Content));
+
+                            OnTranscription?.Invoke(f.FileName, text);
+                        }
+                        break;
+
+                    case ClientProgressMessage progress:
+                        OnProgress?.Invoke(progress);
+                        break;
                 }
             }
         }
+        catch
+        {
+            // соединение сдохло — и хуй с ним
+        }
     }
+
 
     public void Dispose()
     {
