@@ -15,6 +15,7 @@ public class WorkerService
     private readonly WorkerConfiguration _cfg;
     private readonly WorkerState _state = new();
     private ManagerConnection _connection = null!;
+
     private readonly Channel<TaskMessage> _taskQueue =
         Channel.CreateUnbounded<TaskMessage>();
 
@@ -26,18 +27,67 @@ public class WorkerService
     public async Task RunAsync(CancellationToken ct)
     {
         CleanWorkingDirectories();
-
         await InitializeWorkersAsync(ct);
-        await ConnectAsync(ct);
-
-        _ = Task.Run(() => HeartbeatLoop(ct), ct);
-        _ = Task.Run(() => DispatcherLoop(ct), ct);
 
         while (!ct.IsCancellationRequested)
         {
-            var msg = await _connection.ReadAsync(ct);
-            if (msg is TaskMessage task)
-                await _taskQueue.Writer.WriteAsync(task, ct);
+            try
+            {
+                await ConnectAndHandshakeAsync(ct);
+
+                _ = Task.Run(() => HeartbeatLoop(ct), ct);
+                _ = Task.Run(() => DispatcherLoop(ct), ct);
+
+                while (_connection.IsAlive && !ct.IsCancellationRequested)
+                {
+                    var msg = await _connection.ReadAsync(ct);
+                    if (msg is TaskMessage task)
+                        await _taskQueue.Writer.WriteAsync(task, ct);
+                }
+
+                throw new IOException("Manager disconnected");
+            }
+            catch
+            {
+                Console.WriteLine("[WARN] Connection lost. Waiting workers to finish...");
+                await WaitAllWorkersIdleAsync();
+                CleanWorkingDirectories();
+                await Task.Delay(2000, ct);
+            }
+        }
+    }
+
+    private async Task ConnectAndHandshakeAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                _connection = new ManagerConnection();
+                await _connection.ConnectAsync(
+                    _cfg.Manager.Ip,
+                    _cfg.Manager.Port,
+                    ct);
+
+                var hello = new WorkerHelloMessage
+                {
+                    ExtractThreads = _cfg.Workers.ExtractCount,
+                    TranscribeThreads = _cfg.Workers.TranscribeCount
+                };
+
+                await _connection.SendAsync(hello, ct);
+
+                var msg = await _connection.ReadAsync(ct);
+                if (msg is AckMessage ack)
+                {
+                    Console.WriteLine("Handshake success");
+                    return;
+                }
+            }
+            catch
+            {
+                await Task.Delay(2000, ct);
+            }
         }
     }
 
@@ -151,12 +201,24 @@ public class WorkerService
         }
     }
 
+    private async Task WaitAllWorkersIdleAsync()
+    {
+        foreach (var w in _state.AllWorkers.OfType<PythonWorker>())
+            await w.WaitIdleAsync();
+    }
+
+
     private async Task HeartbeatLoop(CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested)
+        while (!ct.IsCancellationRequested && _connection.IsAlive)
         {
-            await Task.Delay(TimeSpan.FromSeconds(_cfg.HeartbeatSeconds), ct);
-            await _connection.SendAsync(new HeartBeatMessage(), ct);
+            await Task.Delay(
+                TimeSpan.FromSeconds(_cfg.HeartbeatSeconds),
+                ct);
+
+            await _connection.SendAsync(
+                new HeartBeatMessage(),
+                ct);
         }
     }
 

@@ -44,6 +44,12 @@ public class PythonWorker : IWorker
         _process.BeginErrorReadLine();
     }
 
+    public Task WaitIdleAsync()
+    {
+        var tcs = _currentTask;
+        return tcs != null ? tcs.Task : Task.CompletedTask;
+    }
+
     private void OnLine(string? line, bool isError)
     {
         if (string.IsNullOrWhiteSpace(line))

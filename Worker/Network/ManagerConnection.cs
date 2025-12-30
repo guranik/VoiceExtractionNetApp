@@ -14,6 +14,11 @@ class ManagerConnection : IDisposable
 
     public bool IsConnected => _client?.Connected == true;
 
+    public bool IsAlive =>
+        _client != null &&
+        _client.Connected &&
+        !(_client.Client.Poll(1, SelectMode.SelectRead) && _client.Client.Available == 0);
+
     public async Task ConnectAsync(string ip, int port, CancellationToken ct)
     {
         _client = new TcpClient();

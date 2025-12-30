@@ -3,6 +3,7 @@
 public enum MessageType
 {
     WorkerHello,
+    Ack,
     HeartBeat,
 
     ExtractTask,
