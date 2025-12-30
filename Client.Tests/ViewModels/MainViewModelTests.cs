@@ -9,7 +9,7 @@ public class MainViewModelTests
     [StaFact]
     public void AppendLog_ShouldAddTimestampedMessage()
     {
-        var vm = new MainViewModel();
+        var vm = new MainViewModel(new TestDispatcher());
 
         vm.GetType()
           .GetMethod("AppendLog", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
@@ -21,7 +21,7 @@ public class MainViewModelTests
     [StaFact]
     public void CanSend_ShouldBeFalse_WhenNoFileSelected()
     {
-        var vm = new MainViewModel();
+        var vm = new MainViewModel(new TestDispatcher());
 
         Assert.False(vm.CanSend);
     }
@@ -29,7 +29,7 @@ public class MainViewModelTests
     [StaFact]
     public void OnProgressReceived_ShouldUpdateProgressValues()
     {
-        var vm = new MainViewModel();
+        var vm = new MainViewModel(new TestDispatcher());
 
         var msg = new ClientProgressMessage
         {

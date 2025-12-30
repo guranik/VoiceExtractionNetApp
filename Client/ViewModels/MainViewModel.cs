@@ -2,6 +2,7 @@
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using Client.Interfaces;
 using Client.Networking;
 using Client.Utils;
 using Common.Messages;
@@ -42,14 +43,19 @@ public class MainViewModel : ObservableObject
         set => Set(ref _transcribeProgress, value);
     }
 
-    public MainViewModel()
+    private readonly IDispatcher _dispatcher;
+
+    public MainViewModel(IDispatcher dispatcher)
     {
+        _dispatcher = dispatcher;
+
         SelectFileCommand = new RelayCommand(SelectFile);
         SendCommand = new RelayCommand(async () => await SendAsync());
 
         _client.OnLog += AppendLog;
         _client.OnProgress += OnProgressReceived;
     }
+
 
     private void SelectFile()
     {
@@ -85,7 +91,7 @@ public class MainViewModel : ObservableObject
 
     private void OnProgressReceived(ClientProgressMessage msg)
     {
-        App.Current.Dispatcher.Invoke(() =>
+        _dispatcher.Invoke(() =>
         {
             ExtractProgress = msg.InputFileDuration > 0
                 ? (double)msg.LatestExtractSegmenStart / msg.InputFileDuration

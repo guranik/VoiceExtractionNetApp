@@ -1,4 +1,5 @@
 ﻿using System.Windows;
+using Client.Utils;
 
 namespace Client;
 
@@ -7,6 +8,6 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        DataContext = new ViewModels.MainViewModel();
+        DataContext = new ViewModels.MainViewModel(new WpfDispatcher());
     }
 }

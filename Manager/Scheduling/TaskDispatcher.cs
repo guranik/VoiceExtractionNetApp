@@ -33,7 +33,9 @@ public class TaskDispatcher
                 if (!TaskQueues.ExtractQueue.TryDequeue(out var task))
                     break;
                 w.Info.DecExtract();
+                w.Info.ActiveExtract.Add(task);
                 await w.SendAsync(task, ct);
+
 
                 Console.WriteLine($"Задача Extract отправлена воркеркеру.");
             }
@@ -53,6 +55,7 @@ public class TaskDispatcher
                     break;
 
                 w.Info.DecTranscribe();
+                w.Info.ActiveTranscribe.Add(task);
                 await w.SendAsync(task, ct);
 
                 Console.WriteLine($"Задача Transcribe отправлена воркеру. Осталось свободных потоков: {w.Info.FreeTranscribe}.");

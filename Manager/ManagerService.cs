@@ -162,6 +162,8 @@ public class ManagerService
         if (task.TaskType == TaskType.Extract)
         {
             worker.Info.IncExtract();
+            worker.Info.ActiveExtract.RemoveAll(t =>
+                t.SourceFileName == task.SourceFileName);
 
             foreach (var f in task.Files)
             {
@@ -190,6 +192,8 @@ public class ManagerService
         else
         {
             worker.Info.IncTranscribe();
+            worker.Info.ActiveTranscribe.RemoveAll(t =>
+                t.SourceFileName == task.SourceFileName);
 
             foreach (var f in task.Files)
             {
@@ -277,6 +281,12 @@ public class ManagerService
 
                 foreach (var w in dead)
                 {
+                    foreach (var t in w.Info.ActiveExtract)
+                        TaskQueues.ExtractQueue.Enqueue(t);
+
+                    foreach (var t in w.Info.ActiveTranscribe)
+                        TaskQueues.TranscribeQueue.Enqueue(t);
+
                     w.Info.Dispose();
                     _workers.Remove(w);
                 }

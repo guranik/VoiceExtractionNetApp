@@ -16,6 +16,9 @@ public class WorkerInfo : IDisposable
 
     public DateTime LastHeartbeatUtc { get; private set; } = DateTime.UtcNow;
 
+    public List<TaskMessage> ActiveExtract { get; } = new();
+    public List<TaskMessage> ActiveTranscribe { get; } = new();
+
     public WorkerInfo(TcpClient client, int extract, int transcribe)
     {
         Client = client;
