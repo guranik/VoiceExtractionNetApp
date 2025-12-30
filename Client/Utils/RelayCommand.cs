@@ -5,7 +5,7 @@ using System.Windows.Input;
 
 namespace Client.Utils;
 
-abstract class ObservableObject : INotifyPropertyChanged
+public abstract class ObservableObject : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler PropertyChanged;
 
@@ -22,7 +22,7 @@ abstract class ObservableObject : INotifyPropertyChanged
             new PropertyChangedEventArgs(prop));
 }
 
-class RelayCommand : ICommand
+public class RelayCommand : ICommand
 {
     private readonly Action _action;
 

@@ -1,6 +1,7 @@
 ﻿using System.IO;
 using System.Text.Json;
 
+namespace Worker;
 public sealed class WorkerConfiguration
 {
     public ManagerConfig Manager { get; set; } = new();

@@ -3,7 +3,8 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 
-class WorkerListener
+namespace Manager.Networking;
+public class WorkerListener
 {
     private readonly TcpListener _listener;
 

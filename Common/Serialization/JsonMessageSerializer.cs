@@ -35,9 +35,6 @@ public static class JsonMessageSerializer
             MessageType.HeartBeat =>
                 JsonSerializer.Deserialize<HeartBeatMessage>(json, Options)!,
 
-            MessageType.Ack =>
-                JsonSerializer.Deserialize<AckMessage>(json, Options)!,
-
             MessageType.ExtractTask or MessageType.TranscribeTask =>
                 JsonSerializer.Deserialize<TaskMessage>(json, Options)!,
 

@@ -1,0 +1,19 @@
+﻿using Common.Messages;
+using FluentAssertions;
+using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities.ObjectModel;
+using Xunit;
+using MessageType = Common.Messages.MessageType;
+
+public class HeartBeatMessageTests
+{
+    [Fact]
+    public void Ctor_ShouldSetTypeAndTimestamp()
+    {
+        var before = DateTime.UtcNow;
+        var msg = new HeartBeatMessage();
+        var after = DateTime.UtcNow;
+
+        msg.Type.Should().Be(MessageType.HeartBeat);
+        msg.TimestampUtc.Should().BeOnOrAfter(before).And.BeOnOrBefore(after);
+    }
+}

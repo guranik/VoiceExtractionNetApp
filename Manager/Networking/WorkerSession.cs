@@ -4,7 +4,8 @@ using System.Threading.Tasks;
 using Common.Messages;
 using Common.Networking;
 
-class WorkerSession
+namespace Manager.Networking;
+public class WorkerSession
 {
     public WorkerInfo Info { get; }
     private readonly TcpMessageReader _reader;

@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Common.Messages;
 using Common.Networking;
 
+namespace Worker.Network;
 class ManagerConnection : IDisposable
 {
     private TcpClient _client;

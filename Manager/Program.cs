@@ -1,7 +1,9 @@
-﻿using System;
+﻿using Manager.Utils;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 
+namespace Manager;
 class Program
 {
     static async Task Main()

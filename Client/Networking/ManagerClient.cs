@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Common.Messages;
@@ -8,7 +7,7 @@ using Common.Networking;
 
 namespace Client.Networking;
 
-class ManagerClient : IDisposable
+public class ManagerClient : IDisposable
 {
     private TcpClient _client;
     private TcpMessageReader _reader;
@@ -16,7 +15,6 @@ class ManagerClient : IDisposable
     private readonly CancellationTokenSource _cts = new();
 
     public event Action<string> OnLog;
-    public event Action<string, string> OnTranscription;
     public event Action<ClientProgressMessage> OnProgress;
 
     public async Task ConnectAsync()
@@ -47,30 +45,17 @@ class ManagerClient : IDisposable
                 if (msg == null)
                     break;
 
-                switch (msg)
+                if (msg is ClientProgressMessage progress)
                 {
-                    case TaskMessage task when task.TaskType == TaskType.Transcribe:
-                        foreach (var f in task.Files)
-                        {
-                            var text = Encoding.UTF8.GetString(
-                                Convert.FromBase64String(f.Base64Content));
-
-                            OnTranscription?.Invoke(f.FileName, text);
-                        }
-                        break;
-
-                    case ClientProgressMessage progress:
-                        OnProgress?.Invoke(progress);
-                        break;
+                    OnProgress?.Invoke(progress);
                 }
             }
         }
         catch
         {
-            // соединение сдохло — и хуй с ним
+            // соединение умерло — молча выходим
         }
     }
-
 
     public void Dispose()
     {

@@ -1,7 +1,9 @@
 ﻿using System.IO;
+using System.Reflection.Metadata.Ecma335;
 using System.Text.Json;
 
-class ManagerConfig
+namespace Manager;
+public class ManagerConfig
 {
     public NetworkConfig Network { get; set; }
     public DirectoryConfig Directories { get; set; }
@@ -19,12 +21,12 @@ class ManagerConfig
     }
 }
 
-class NetworkConfig
+public class NetworkConfig
 {
     public int ManagerPort { get; set; }
 }
 
-class DirectoryConfig
+public class DirectoryConfig
 {
     public string Input { get; set; }
     public string ExtractSegments { get; set; }
@@ -32,13 +34,13 @@ class DirectoryConfig
     public string Transcriptions { get; set; }
 }
 
-class AudioSplitterConfig
+public class AudioSplitterConfig
 {
     public double MaxExtractSegmentDurationSec { get; set; }
     public double ExtractTranscribeEfficiency { get; set; }
 }
 
-class HeartbeatConfig
+public class HeartbeatConfig
 {
     public int WorkerTimeoutSec { get; set; }
     public int MonitorIntervalMs { get; set; }

@@ -10,8 +10,12 @@ using Common.Messages;
 using Common.Models;
 using Common.Utils;
 using Common.Networking;
+using Manager.Networking;
+using Manager.Scheduling;
+using Manager.Processing;
 
-class ManagerService
+namespace Manager;
+public class ManagerService
 {
     private readonly ManagerConfig _config;
     private readonly WorkerListener _listener;
@@ -250,12 +254,6 @@ class ManagerService
 
         lock (_workers)
             _workers.Add(session);
-
-        var writer = new TcpMessageWriter(client);
-        await writer.SendAsync(new AckMessage
-        {
-            AckedMessageId = hello.MessageId
-        }, ct);
     }
 
     private WorkerSession GetWorker(TcpClient client)

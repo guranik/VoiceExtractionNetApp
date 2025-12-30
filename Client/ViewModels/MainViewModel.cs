@@ -1,6 +1,5 @@
 ﻿using System;
 using System.IO;
-using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using Client.Networking;
@@ -12,19 +11,19 @@ using Microsoft.Win32;
 
 namespace Client.ViewModels;
 
-class MainViewModel : ObservableObject
+public class MainViewModel : ObservableObject
 {
     private readonly ManagerClient _client = new();
 
     private string _selectedFile;
     public bool CanSend => !string.IsNullOrEmpty(_selectedFile);
 
+    private string _log = "";
     public string Log
     {
         get => _log;
         set => Set(ref _log, value);
     }
-    private string _log = "";
 
     public ICommand SelectFileCommand { get; }
     public ICommand SendCommand { get; }
@@ -49,7 +48,6 @@ class MainViewModel : ObservableObject
         SendCommand = new RelayCommand(async () => await SendAsync());
 
         _client.OnLog += AppendLog;
-        _client.OnTranscription += OnTranscriptionReceived;
         _client.OnProgress += OnProgressReceived;
     }
 
@@ -83,12 +81,6 @@ class MainViewModel : ObservableObject
 
         await _client.SendAsync(msg);
         AppendLog("File sent to manager");
-    }
-
-    private void OnTranscriptionReceived(string name, string text)
-    {
-        File.WriteAllText($"{name}.txt", text);
-        AppendLog($"Transcription saved: {name}.txt");
     }
 
     private void OnProgressReceived(ClientProgressMessage msg)

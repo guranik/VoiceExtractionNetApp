@@ -1,7 +1,8 @@
 ﻿using System;
 using System.Net.Sockets;
 
-class WorkerInfo : IDisposable
+namespace Manager;
+public class WorkerInfo : IDisposable
 {
     public TcpClient Client { get; }
 

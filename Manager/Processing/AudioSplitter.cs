@@ -3,7 +3,8 @@ using System.IO;
 using System.Linq;
 using NAudio.Wave;
 
-static class AudioSplitter
+namespace Manager.Processing;
+public static class AudioSplitter
 {
     public static void Split(
         string inputFile,

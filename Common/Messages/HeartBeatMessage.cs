@@ -3,9 +3,5 @@
 public sealed class HeartBeatMessage : MessageBase
 {
     public DateTime TimestampUtc { get; init; } = DateTime.UtcNow;
-
-    public HeartBeatMessage()
-    {
-        Type = MessageType.HeartBeat;
-    }
+    public override MessageType Type => MessageType.HeartBeat;
 }

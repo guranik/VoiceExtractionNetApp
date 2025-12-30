@@ -3,8 +3,10 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Common.Messages;
+using Manager.Networking;
 
-class TaskDispatcher
+namespace Manager.Scheduling;
+public class TaskDispatcher
 {
     private readonly List<WorkerSession> _workers;
 

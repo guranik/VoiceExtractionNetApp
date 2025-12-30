@@ -7,8 +7,10 @@ using System.Threading.Channels;
 using Common.Messages;
 using Common.Models;
 using Common.Utils;
+using Worker.Network;
 
-class WorkerService
+namespace Worker;
+public class WorkerService
 {
     private readonly WorkerConfiguration _cfg;
     private readonly WorkerState _state = new();

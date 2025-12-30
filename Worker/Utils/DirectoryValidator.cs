@@ -1,6 +1,7 @@
 ﻿using System.IO;
 
-static class DirectoryValidator
+namespace Worker.Utils;
+public static class DirectoryValidator
 {
     public static void Validate(WorkerConfiguration cfg)
     {

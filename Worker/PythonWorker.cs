@@ -1,7 +1,9 @@
 ﻿using System.Diagnostics;
 using System.Text;
+using Worker.Interfaces;
 
-class PythonWorker : IDisposable
+namespace Worker;
+public class PythonWorker : IWorker
 {
     public int ThreadIndex { get; }
 
