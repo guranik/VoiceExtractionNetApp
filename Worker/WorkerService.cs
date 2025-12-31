@@ -207,7 +207,6 @@ public class WorkerService
             await w.WaitIdleAsync();
     }
 
-
     private async Task HeartbeatLoop(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested && _connection.IsAlive)

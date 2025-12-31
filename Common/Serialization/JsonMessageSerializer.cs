@@ -32,6 +32,9 @@ public static class JsonMessageSerializer
             MessageType.WorkerHello =>
                 JsonSerializer.Deserialize<WorkerHelloMessage>(json, Options)!,
 
+            MessageType.Ack =>
+                JsonSerializer.Deserialize<AckMessage>(json, Options)!,
+
             MessageType.HeartBeat =>
                 JsonSerializer.Deserialize<HeartBeatMessage>(json, Options)!,
 

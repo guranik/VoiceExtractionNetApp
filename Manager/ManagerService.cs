@@ -258,6 +258,11 @@ public class ManagerService
 
         lock (_workers)
             _workers.Add(session);
+
+        var writer = new TcpMessageWriter(client);
+        await writer.SendAsync(new AckMessage(), ct);
+
+        Console.WriteLine("Worker registered and ACK sent");
     }
 
     private WorkerSession GetWorker(TcpClient client)
