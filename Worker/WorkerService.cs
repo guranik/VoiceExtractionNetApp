@@ -69,7 +69,7 @@ public class WorkerService
                     _cfg.Manager.Port,
                     ct);
 
-                var hello = new WorkerHelloMessage
+                var hello = new WorkerReadyMessage
                 {
                     ExtractThreads = _cfg.Workers.ExtractCount,
                     TranscribeThreads = _cfg.Workers.TranscribeCount
@@ -133,7 +133,7 @@ public class WorkerService
         _connection = new ManagerConnection();
         await _connection.ConnectAsync(_cfg.Manager.Ip, _cfg.Manager.Port, ct);
 
-        await _connection.SendAsync(new WorkerHelloMessage
+        await _connection.SendAsync(new WorkerReadyMessage
         {
             ExtractThreads = _cfg.Workers.ExtractCount,
             TranscribeThreads = _cfg.Workers.TranscribeCount

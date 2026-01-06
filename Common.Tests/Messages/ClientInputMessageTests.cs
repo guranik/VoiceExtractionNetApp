@@ -8,16 +8,16 @@ public class ClientInputMessageTests
     [Fact]
     public void Type_ShouldAlwaysBeClientInput()
     {
-        var msg = new ClientInputMessage();
+        var msg = new ClientFileMessage();
 
-        msg.Type.Should().Be(MessageType.ClientInput);
+        msg.Type.Should().Be(MessageType.ClientFile);
     }
 
     [Fact]
     public void File_CanBeAssigned()
     {
         var file = new FilePayload { FileName = "test.txt" };
-        var msg = new ClientInputMessage { File = file };
+        var msg = new ClientFileMessage { File = file };
 
         msg.File.Should().Be(file);
     }

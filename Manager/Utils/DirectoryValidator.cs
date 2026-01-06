@@ -9,6 +9,7 @@ public static class DirectoryValidator
         Ensure(config.Directories.ExtractSegments);
         Ensure(config.Directories.TranscribeSegments);
         Ensure(config.Directories.Transcriptions);
+        Ensure(config.Directories.Output);
     }
 
     private static void Ensure(string dir)

@@ -15,6 +15,7 @@ using Manager.Scheduling;
 using Manager.Processing;
 
 namespace Manager;
+
 public class ManagerService
 {
     private readonly ManagerConfig _config;
@@ -23,6 +24,8 @@ public class ManagerService
 
     private readonly List<WorkerSession> _workers = new();
     private readonly ConcurrentQueue<(TcpClient client, MessageBase msg)> _incoming = new();
+
+    private bool _finalized = true;
 
     public ManagerService(ManagerConfig config)
     {
@@ -98,7 +101,7 @@ public class ManagerService
     {
         switch (msg)
         {
-            case WorkerHelloMessage hello:
+            case WorkerReadyMessage hello:
                 await RegisterWorker(client, hello, ct);
                 break;
 
@@ -110,14 +113,14 @@ public class ManagerService
                 await HandleWorkerTask(task, client);
                 break;
 
-            case ClientInputMessage input:
+            case ClientFileMessage input:
                 _currentClient = client;
                 await HandleClientInputAsync(input);
                 break;
         }
     }
-
-    private async Task HandleClientInputAsync(ClientInputMessage msg)
+    ///////////////
+    private async Task HandleClientInputAsync(ClientFileMessage msg)
     {
         var inputPath = Path.Combine(
             _config.Directories.Input,
@@ -152,9 +155,10 @@ public class ManagerService
             });
         }
 
+        _finalized = false;
         SendClientProgress();
     }
-
+    ///////////////
     private async Task HandleWorkerTask(TaskMessage task, TcpClient client)
     {
         var worker = _workers.First(w => w.Info.Client == client);
@@ -167,11 +171,9 @@ public class ManagerService
 
             foreach (var f in task.Files)
             {
-                var segmentPath = Path.Combine(
-                    _config.Directories.TranscribeSegments,
-                    f.FileName);
-
-                Base64FileHelper.WriteBase64ToFile(segmentPath, f.Base64Content);
+                Base64FileHelper.WriteBase64ToFile(
+                    Path.Combine(_config.Directories.TranscribeSegments, f.FileName),
+                    f.Base64Content);
 
                 TaskQueues.AddExtract(f.FileName);
 
@@ -189,7 +191,7 @@ public class ManagerService
 
             SendClientProgress();
         }
-        else
+        else // Transcribe
         {
             worker.Info.IncTranscribe();
             worker.Info.ActiveTranscribe.RemoveAll(t =>
@@ -209,6 +211,11 @@ public class ManagerService
                 Path.ChangeExtension(task.SourceFileName, ".wav")));
 
             SendClientProgress();
+
+            if (!_finalized && CanFinalize())
+            {
+                _finalized = await FinalizeAsync();
+            }
         }
     }
 
@@ -232,7 +239,7 @@ public class ManagerService
 
         var msg = new ClientProgressMessage
         {
-            LatestExtractSegmenStart = latest,
+            LatestExtractSegmentStart = latest,
             InputFileDuration = duration,
             TotalTranscribeSegments = TaskQueues.ExtractFiles.Count,
             TotalTranscriptions = TaskQueues.TranscribeFiles.Count
@@ -241,28 +248,82 @@ public class ManagerService
         _ = writer.SendAsync(msg, CancellationToken.None);
     }
 
+    private bool CanFinalize()
+    {
+        return
+            !Directory.GetFiles(_config.Directories.ExtractSegments).Any() &&
+            !Directory.GetFiles(_config.Directories.TranscribeSegments).Any() &&
+            TaskQueues.ExtractQueue.IsEmpty &&
+            TaskQueues.TranscribeQueue.IsEmpty;
+    }
+    ///////////////
+    private async Task<bool> FinalizeAsync()
+    {
+        var inputFile = Directory.GetFiles(_config.Directories.Input).FirstOrDefault();
+        if (inputFile == null)
+            return false;
+
+        var inputName = Path.GetFileNameWithoutExtension(inputFile);
+        var outputPath = Path.Combine(
+            _config.Directories.Output,
+            inputName + ".txt");
+
+        using (var sw = new StreamWriter(outputPath))
+        {
+            foreach (var file in Directory
+                .GetFiles(_config.Directories.Transcriptions)
+                .OrderBy(f => f))
+            {
+                await sw.WriteLineAsync(
+                    $"[{Path.GetFileName(file)}]: {File.ReadAllText(file)}");
+            }
+        }
+
+        var msg = new ClientFileMessage
+        {
+            File = new FilePayload
+            {
+                FileName = Path.GetFileName(outputPath),
+                Base64Content = Base64FileHelper.ReadFileAsBase64(outputPath)
+            }
+        };
+
+        await new TcpMessageWriter(_currentClient)
+            .SendAsync(msg, CancellationToken.None);
+
+        try
+        {
+            File.Delete(inputFile);
+            File.Delete(outputPath);
+        }
+        catch { }
+
+        Console.WriteLine("Finalization completed and sent to client");
+
+        ResetManagerState();
+        return true;
+    }
+
     private async Task RegisterWorker(
         TcpClient client,
-        WorkerHelloMessage hello,
+        WorkerReadyMessage hello,
         CancellationToken ct)
     {
         if (GetWorker(client) != null)
             return;
 
-        var info = new WorkerInfo(
+        var session = new WorkerSession(
             client,
-            hello.ExtractThreads,
-            hello.TranscribeThreads);
-
-        var session = new WorkerSession(client, info);
+            new WorkerInfo(
+                client,
+                hello.ExtractThreads,
+                hello.TranscribeThreads));
 
         lock (_workers)
             _workers.Add(session);
 
-        var writer = new TcpMessageWriter(client);
-        await writer.SendAsync(new AckMessage(), ct);
-
-        Console.WriteLine("Worker registered and ACK sent");
+        await new TcpMessageWriter(client)
+            .SendAsync(new AckMessage(), ct);
     }
 
     private WorkerSession GetWorker(TcpClient client)
@@ -297,9 +358,7 @@ public class ManagerService
                 }
             }
 
-            await Task.Delay(
-                _config.Heartbeat.MonitorIntervalMs,
-                ct);
+            await Task.Delay(_config.Heartbeat.MonitorIntervalMs, ct);
         }
     }
 
@@ -316,4 +375,31 @@ public class ManagerService
             }
         }
     }
+
+    private void ResetManagerState()
+    {
+        CleanDirectories(
+            _config.Directories.Input,
+            _config.Directories.ExtractSegments,
+            _config.Directories.TranscribeSegments,
+            _config.Directories.Transcriptions,
+            _config.Directories.Output
+        );
+
+        TaskQueues.ClearAll();
+
+        lock (_workers)
+        {
+            foreach (var w in _workers)
+            {
+                w.Info.ResetState();
+            }
+        }
+
+        _currentClient = null;
+        _finalized = true;
+
+        Console.WriteLine("Manager state fully reset and ready for next file");
+    }
+
 }

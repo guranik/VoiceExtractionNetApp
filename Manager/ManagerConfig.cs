@@ -24,6 +24,7 @@ public class ManagerConfig
 public class NetworkConfig
 {
     public int ManagerPort { get; set; }
+    public int FinalizeIdleTimeoutSeconds { get; set; }
 }
 
 public class DirectoryConfig
@@ -32,6 +33,7 @@ public class DirectoryConfig
     public string ExtractSegments { get; set; }
     public string TranscribeSegments { get; set; }
     public string Transcriptions { get; set; }
+    public string Output { get; set; }
 }
 
 public class AudioSplitterConfig

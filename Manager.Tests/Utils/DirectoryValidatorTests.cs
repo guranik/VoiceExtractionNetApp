@@ -19,7 +19,8 @@ public class DirectoryValidatorTests
                 Input = System.IO.Path.Combine(dir.Path, "in"),
                 ExtractSegments = System.IO.Path.Combine(dir.Path, "ex"),
                 TranscribeSegments = System.IO.Path.Combine(dir.Path, "tr"),
-                Transcriptions = System.IO.Path.Combine(dir.Path, "out")
+                Transcriptions = System.IO.Path.Combine(dir.Path, "trs"),
+                Output = System.IO.Path.Combine(dir.Path, "out")
             }
         };
 
@@ -29,5 +30,6 @@ public class DirectoryValidatorTests
         Assert.True(System.IO.Directory.Exists(config.Directories.ExtractSegments));
         Assert.True(System.IO.Directory.Exists(config.Directories.TranscribeSegments));
         Assert.True(System.IO.Directory.Exists(config.Directories.Transcriptions));
+        Assert.True(System.IO.Directory.Exists(config.Directories.Output));
     }
 }

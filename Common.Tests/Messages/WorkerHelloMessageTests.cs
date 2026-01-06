@@ -7,15 +7,15 @@ public class WorkerHelloMessageTests
     [Fact]
     public void Ctor_ShouldSetType()
     {
-        var msg = new WorkerHelloMessage();
+        var msg = new WorkerReadyMessage();
 
-        msg.Type.Should().Be(MessageType.WorkerHello);
+        msg.Type.Should().Be(MessageType.WorkerReady);
     }
 
     [Fact]
     public void Properties_ShouldBeAssigned()
     {
-        var msg = new WorkerHelloMessage
+        var msg = new WorkerReadyMessage
         {
             ExtractThreads = 2,
             TranscribeThreads = 4

@@ -19,13 +19,13 @@ public class ClientProgressMessageTests
     {
         var msg = new ClientProgressMessage
         {
-            LatestExtractSegmenStart = 10,
+            LatestExtractSegmentStart = 10,
             InputFileDuration = 100,
             TotalTranscribeSegments = 5,
             TotalTranscriptions = 3
         };
 
-        msg.LatestExtractSegmenStart.Should().Be(10);
+        msg.LatestExtractSegmentStart.Should().Be(10);
         msg.InputFileDuration.Should().Be(100);
         msg.TotalTranscribeSegments.Should().Be(5);
         msg.TotalTranscriptions.Should().Be(3);

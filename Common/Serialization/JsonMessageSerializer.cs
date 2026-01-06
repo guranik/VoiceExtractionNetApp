@@ -29,8 +29,8 @@ public static class JsonMessageSerializer
 
         return type switch
         {
-            MessageType.WorkerHello =>
-                JsonSerializer.Deserialize<WorkerHelloMessage>(json, Options)!,
+            MessageType.WorkerReady =>
+                JsonSerializer.Deserialize<WorkerReadyMessage>(json, Options)!,
 
             MessageType.Ack =>
                 JsonSerializer.Deserialize<AckMessage>(json, Options)!,
@@ -41,8 +41,8 @@ public static class JsonMessageSerializer
             MessageType.ExtractTask or MessageType.TranscribeTask =>
                 JsonSerializer.Deserialize<TaskMessage>(json, Options)!,
 
-            MessageType.ClientInput =>
-                JsonSerializer.Deserialize<ClientInputMessage>(json, Options)!,
+            MessageType.ClientFile =>
+                JsonSerializer.Deserialize<ClientFileMessage>(json, Options)!,
 
             MessageType.ClientProgress =>
                 JsonSerializer.Deserialize<ClientProgressMessage>(json, Options)!,

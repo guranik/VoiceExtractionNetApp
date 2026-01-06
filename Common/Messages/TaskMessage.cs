@@ -9,6 +9,6 @@ public sealed class TaskMessage : MessageBase
             : MessageType.TranscribeTask;
 
     public TaskType TaskType { get; set; }
-    public string SourceFileName { get; set; }
+    public string SourceFileName { get; set; } = null!;
     public List<FilePayload> Files { get; set; } = new();
 }

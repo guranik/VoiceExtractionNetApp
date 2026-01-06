@@ -34,7 +34,7 @@ public class MainViewModelTests
         var msg = new ClientProgressMessage
         {
             InputFileDuration = 100,
-            LatestExtractSegmenStart = 50,
+            LatestExtractSegmentStart = 50,
             TotalTranscribeSegments = 10,
             TotalTranscriptions = 4
         };

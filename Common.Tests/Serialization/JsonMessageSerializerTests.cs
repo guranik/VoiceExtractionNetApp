@@ -8,7 +8,7 @@ public class JsonMessageSerializerTests
     [Fact]
     public void SerializeAndDeserialize_ShouldPreserveMessage()
     {
-        var original = new WorkerHelloMessage
+        var original = new WorkerReadyMessage
         {
             ExtractThreads = 1,
             TranscribeThreads = 2
@@ -17,8 +17,8 @@ public class JsonMessageSerializerTests
         var bytes = JsonMessageSerializer.Serialize(original);
         var result = JsonMessageSerializer.Deserialize(bytes);
 
-        result.Should().BeOfType<WorkerHelloMessage>();
-        var msg = (WorkerHelloMessage)result;
+        result.Should().BeOfType<WorkerReadyMessage>();
+        var msg = (WorkerReadyMessage)result;
         msg.ExtractThreads.Should().Be(1);
         msg.TranscribeThreads.Should().Be(2);
     }

@@ -24,4 +24,13 @@ public static class TaskQueues
         lock (_lock)
             TranscribeFiles.Add(file);
     }
+
+    public static void ClearAll()
+    {
+        while (ExtractQueue.TryDequeue(out _)) { }
+        while (TranscribeQueue.TryDequeue(out _)) { }
+
+        ExtractFiles.Clear();
+        TranscribeFiles.Clear();
+    }
 }

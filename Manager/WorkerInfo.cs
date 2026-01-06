@@ -75,4 +75,10 @@ public class WorkerInfo : IDisposable
     {
         try { Client.Close(); } catch { }
     }
+
+    public void ResetState()
+    {
+        ActiveExtract.Clear();
+        ActiveTranscribe.Clear();
+    }
 }

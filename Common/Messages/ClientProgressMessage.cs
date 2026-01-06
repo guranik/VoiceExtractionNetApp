@@ -9,7 +9,7 @@ namespace Common.Messages
     public class ClientProgressMessage : MessageBase
     {
         public override MessageType Type => MessageType.ClientProgress;
-        public int LatestExtractSegmenStart { get; set; } 
+        public int LatestExtractSegmentStart { get; set; } 
         public int InputFileDuration { get; set; }
         public int TotalTranscribeSegments { get; set; }
         public int TotalTranscriptions { get; set; }

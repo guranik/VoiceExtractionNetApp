@@ -2,13 +2,13 @@
 
 public enum MessageType
 {
-    WorkerHello,
+    WorkerReady,
     Ack,
     HeartBeat,
 
     ExtractTask,
     TranscribeTask,
 
-    ClientInput,
+    ClientFile,
     ClientProgress
 }

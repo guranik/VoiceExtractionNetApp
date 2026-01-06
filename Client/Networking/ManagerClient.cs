@@ -16,6 +16,7 @@ public class ManagerClient : IDisposable
 
     public event Action<string> OnLog;
     public event Action<ClientProgressMessage> OnProgress;
+    public event Action<ClientFileMessage> OnFileReceived;
 
     public async Task ConnectAsync()
     {
@@ -48,6 +49,10 @@ public class ManagerClient : IDisposable
                 if (msg is ClientProgressMessage progress)
                 {
                     OnProgress?.Invoke(progress);
+                }
+                else if (msg is ClientFileMessage file)
+                {
+                    OnFileReceived?.Invoke(file);
                 }
             }
         }
