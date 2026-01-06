@@ -20,7 +20,8 @@ public class ManagerService
 {
     private readonly ManagerConfig _config;
     private readonly WorkerListener _listener;
-    private TcpClient _currentClient;
+    private readonly object _clientLock = new();
+    private TcpClient? _currentClient;
 
     private readonly List<WorkerSession> _workers = new();
     private readonly ConcurrentQueue<(TcpClient client, MessageBase msg)> _incoming = new();
@@ -94,6 +95,11 @@ public class ManagerService
         }
     }
 
+    private TcpClient? GetCurrentClient()
+    {
+        lock (_clientLock)
+            return _currentClient;
+    }
     private async Task HandleIncoming(
         TcpClient client,
         MessageBase msg,
@@ -115,12 +121,12 @@ public class ManagerService
 
             case ClientFileMessage input:
                 _currentClient = client;
-                await HandleClientInputAsync(input);
+                HandleClientInput(input);
                 break;
         }
     }
     ///////////////
-    private async Task HandleClientInputAsync(ClientFileMessage msg)
+    private void HandleClientInput(ClientFileMessage msg)
     {
         var inputPath = Path.Combine(
             _config.Directories.Input,
@@ -175,8 +181,6 @@ public class ManagerService
                     Path.Combine(_config.Directories.TranscribeSegments, f.FileName),
                     f.Base64Content);
 
-                TaskQueues.AddExtract(f.FileName);
-
                 TaskQueues.TranscribeQueue.Enqueue(new TaskMessage
                 {
                     TaskType = TaskType.Transcribe,
@@ -202,8 +206,6 @@ public class ManagerService
                 Base64FileHelper.WriteBase64ToFile(
                     Path.Combine(_config.Directories.Transcriptions, f.FileName),
                     f.Base64Content);
-
-                TaskQueues.AddTranscribe(f.FileName);
             }
 
             File.Delete(Path.Combine(
@@ -230,19 +232,25 @@ public class ManagerService
             .GetFiles(_config.Directories.Input)
             .FirstOrDefault();
 
-        var latest = AudioSplitter.GetLatestExtractSegmentStartSec(
-            _config.Directories.ExtractSegments, inputFile);
+        var latestExtract = inputFile != null
+            ? AudioSplitter.GetLatestExtractSegmentStartSec(
+                _config.Directories.ExtractSegments,
+                inputFile)
+            : 0;
 
         var duration = inputFile != null
             ? AudioSplitter.GetInputDurationSec(inputFile)
             : 0;
 
+        var latestTranscriptionEnd =
+            AudioSplitter.GetLatestTranscriptionEndSec(
+                _config.Directories.Transcriptions);
+
         var msg = new ClientProgressMessage
         {
-            LatestExtractSegmentStart = latest,
+            EarliestExtractSegmentStart = latestExtract,
             InputFileDuration = duration,
-            TotalTranscribeSegments = TaskQueues.ExtractFiles.Count,
-            TotalTranscriptions = TaskQueues.TranscribeFiles.Count
+            LatestTranscriptionEnd = latestTranscriptionEnd
         };
 
         _ = writer.SendAsync(msg, CancellationToken.None);
@@ -259,6 +267,9 @@ public class ManagerService
     ///////////////
     private async Task<bool> FinalizeAsync()
     {
+        var client = GetCurrentClient();
+        if (client == null || !client.Connected)
+            return false;
         var inputFile = Directory.GetFiles(_config.Directories.Input).FirstOrDefault();
         if (inputFile == null)
             return false;
@@ -288,7 +299,7 @@ public class ManagerService
             }
         };
 
-        await new TcpMessageWriter(_currentClient)
+        await new TcpMessageWriter(client)
             .SendAsync(msg, CancellationToken.None);
 
         try
@@ -326,7 +337,7 @@ public class ManagerService
             .SendAsync(new AckMessage(), ct);
     }
 
-    private WorkerSession GetWorker(TcpClient client)
+    private WorkerSession? GetWorker(TcpClient client)
     {
         lock (_workers)
             return _workers.FirstOrDefault(w => w.Info.Client == client);
@@ -401,5 +412,4 @@ public class ManagerService
 
         Console.WriteLine("Manager state fully reset and ready for next file");
     }
-
 }

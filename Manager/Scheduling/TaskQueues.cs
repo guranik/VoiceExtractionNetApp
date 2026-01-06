@@ -8,29 +8,13 @@ public static class TaskQueues
     public static readonly ConcurrentQueue<TaskMessage> ExtractQueue = new();
     public static readonly ConcurrentQueue<TaskMessage> TranscribeQueue = new();
 
-    public static readonly List<string> ExtractFiles = new();
-    public static readonly List<string> TranscribeFiles = new();
 
     private static readonly object _lock = new();
 
-    public static void AddExtract(string file)
-    {
-        lock (_lock)
-            ExtractFiles.Add(file);
-    }
-
-    public static void AddTranscribe(string file)
-    {
-        lock (_lock)
-            TranscribeFiles.Add(file);
-    }
 
     public static void ClearAll()
     {
         while (ExtractQueue.TryDequeue(out _)) { }
         while (TranscribeQueue.TryDequeue(out _)) { }
-
-        ExtractFiles.Clear();
-        TranscribeFiles.Clear();
     }
 }

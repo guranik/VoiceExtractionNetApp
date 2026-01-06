@@ -123,11 +123,9 @@ public class MainViewModel : ObservableObject
             }
         };
 
-        // общий таймер
         _executionTimer.Reset();
         _executionTimer.Start();
 
-        // таймер экстракции
         _extractTimer.Reset();
         _extractTimer.Start();
         _extractCompleted = false;
@@ -143,30 +141,32 @@ public class MainViewModel : ObservableObject
         _dispatcher.Invoke(() =>
         {
             ExtractProgress = msg.InputFileDuration > 0
-                ? (double)msg.LatestExtractSegmentStart / msg.InputFileDuration
+                ? Math.Min(
+                    1.0,
+                    (double)msg.EarliestExtractSegmentStart / msg.InputFileDuration)
                 : 0;
 
-            TranscribeProgress = msg.TotalTranscribeSegments > 0
-                ? (double)msg.TotalTranscriptions / msg.TotalTranscribeSegments
+            TranscribeProgress = msg.InputFileDuration > 0
+                ? Math.Min(
+                    1.0,
+                    (double)msg.LatestTranscriptionEnd / msg.InputFileDuration)
                 : 0;
 
-            // фиксация завершения экстракции
             if (!_extractCompleted &&
                 msg.InputFileDuration > 0 &&
-                msg.LatestExtractSegmentStart >= msg.InputFileDuration)
+                msg.EarliestExtractSegmentStart >= msg.InputFileDuration)
             {
                 _extractCompleted = true;
                 _extractTimer.Stop();
 
-                AppendLog("Количество воркеров: 3");
-                AppendLog($"Общее время выполнения: {_extractTimer.Elapsed}");
+                AppendLog("Экстракция завершена");
+                AppendLog($"Время экстракции: {_extractTimer.Elapsed}");
             }
 
             AppendLog(
                 $"Progress: extract {ExtractProgress:P0}, transcribe {TranscribeProgress:P0}");
         });
     }
-
 
     private void OnFileReceived(ClientFileMessage msg)
     {
@@ -175,7 +175,6 @@ public class MainViewModel : ObservableObject
             var path = Path.Combine(OutputDir, msg.File.FileName);
             Base64FileHelper.WriteBase64ToFile(path, msg.File.Base64Content);
 
-            // остановка таймера
             if (_executionTimer.IsRunning)
             {
                 _executionTimer.Stop();

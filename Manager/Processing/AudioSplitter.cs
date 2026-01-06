@@ -94,4 +94,55 @@ public static class AudioSplitter
         using var reader = new AudioFileReader(inputFile);
         return (int)reader.TotalTime.TotalSeconds;
     }
+
+    public static int GetLatestTranscriptionEndSec(string transcriptionsDir)
+    {
+        if (!Directory.Exists(transcriptionsDir))
+            return 0;
+
+        var file = Directory.GetFiles(transcriptionsDir, "*.txt")
+            .OrderByDescending(f => f)
+            .FirstOrDefault();
+
+        if (file == null)
+            return 0;
+
+        var name = Path.GetFileNameWithoutExtension(file);
+        var parts = name.Split('_');
+
+        if (parts.Length != 2)
+            return 0;
+
+        double start = ParseStartTime(parts[0]); 
+        double duration = ParseDuration(parts[1]);  
+
+        return (int)Math.Round(start + duration);
+    }
+
+
+    private static double ParseStartTime(string value)
+    {
+        // 00-02-00.000
+        var hms = value.Split('-');
+        if (hms.Length != 3)
+            return 0;
+
+        int h = int.Parse(hms[0]);
+        int m = int.Parse(hms[1]);
+
+        var secParts = hms[2].Split('.');
+        int s = int.Parse(secParts[0]);
+        int ms = secParts.Length > 1 ? int.Parse(secParts[1]) : 0;
+
+        return h * 3600 + m * 60 + s + ms / 1000.0;
+    }
+
+    private static double ParseDuration(string value)
+    {
+        // 30.000
+        return double.Parse(
+            value,
+            System.Globalization.CultureInfo.InvariantCulture
+        );
+    }
 }
