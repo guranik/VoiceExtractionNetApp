@@ -22,13 +22,15 @@ public class MainViewModel : ObservableObject
     private readonly Stopwatch _extractTimer = new();
 
     private string _selectedFile;
-    private string _outputDir;
+    private string? _outputDir;
 
     private bool _extractCompleted;
 
     public bool CanSend =>
         !string.IsNullOrEmpty(_selectedFile) &&
-        !string.IsNullOrEmpty(_outputDir);
+        !string.IsNullOrEmpty(_outputDir) &&
+        File.Exists(_selectedFile) &&
+        Directory.Exists(_outputDir);
 
     private string _log = "";
     public string Log
@@ -107,11 +109,30 @@ public class MainViewModel : ObservableObject
         {
             OutputDir = Path.GetDirectoryName(dlg.FileName);
             AppendLog($"Output dir: {OutputDir}");
+            OnPropertyChanged(nameof(CanSend));
         }
     }
 
     private async Task SendAsync()
     {
+        if (!File.Exists(_selectedFile))
+        {
+            AppendLog("Ошибка: входной файл не найден.");
+            return;
+        }
+
+        if (!Directory.Exists(_outputDir))
+        {
+            AppendLog("Ошибка: выходная папка не существует.");
+            return;
+        }
+
+        if (!ValidateWavFile(_selectedFile, out var errorMessage))
+        {
+            AppendLog($"Ошибка: {errorMessage}");
+            return;
+        }
+
         await _client.ConnectAsync();
 
         var msg = new ClientFileMessage
@@ -135,6 +156,80 @@ public class MainViewModel : ObservableObject
         await _client.SendAsync(msg);
     }
 
+    private bool ValidateWavFile(string filePath, out string errorMessage)
+    {
+        errorMessage = null;
+
+        try
+        {
+            using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+            using var reader = new BinaryReader(fileStream);
+
+            // Проверка RIFF заголовка
+            var riff = reader.ReadBytes(4);
+            if (System.Text.Encoding.ASCII.GetString(riff) != "RIFF")
+            {
+                errorMessage = "Файл не является корректным WAV (отсутствует RIFF заголовок).";
+                return false;
+            }
+
+            fileStream.Seek(8, SeekOrigin.Begin);
+            var wave = reader.ReadBytes(4);
+            if (System.Text.Encoding.ASCII.GetString(wave) != "WAVE")
+            {
+                errorMessage = "Файл не является корректным WAV (отсутствует WAVE метка).";
+                return false;
+            }
+
+            // Ищем блок 'fmt '
+            while (fileStream.Position < fileStream.Length)
+            {
+                var chunkId = reader.ReadBytes(4);
+                var chunkSize = reader.ReadInt32();
+
+                var chunkName = System.Text.Encoding.ASCII.GetString(chunkId);
+                if (chunkName == "fmt ")
+                {
+                    var formatTag = reader.ReadInt16();
+                    var channels = reader.ReadInt16();
+                    var sampleRate = reader.ReadInt32();
+                    reader.BaseStream.Seek(chunkSize - 8, SeekOrigin.Current); // skip остальное
+
+                    if (formatTag != 1)
+                    {
+                        errorMessage = "Поддерживается только PCM-формат WAV.";
+                        return false;
+                    }
+
+                    if (channels != 1)
+                    {
+                        errorMessage = "Поддерживается только моно-аудио (1 канал).";
+                        return false;
+                    }
+
+                    if (sampleRate != 8000 && sampleRate != 16000)
+                    {
+                        errorMessage = "Поддерживается только частота дискретизации 8 кГц или 16 кГц.";
+                        return false;
+                    }
+
+                    return true;
+                }
+                else
+                {
+                    fileStream.Seek(chunkSize, SeekOrigin.Current);
+                }
+            }
+
+            errorMessage = "Не найден блок 'fmt ' в WAV-файле.";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Ошибка при чтении WAV-файла: {ex.Message}";
+            return false;
+        }
+    }
 
     private void OnProgressReceived(ClientProgressMessage msg)
     {
@@ -163,8 +258,6 @@ public class MainViewModel : ObservableObject
                 AppendLog($"Время экстракции: {_extractTimer.Elapsed}");
             }
 
-            AppendLog(
-                $"Progress: extract {ExtractProgress:P0}, transcribe {TranscribeProgress:P0}");
         });
     }
 

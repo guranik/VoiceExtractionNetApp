@@ -100,6 +100,7 @@ public class ManagerService
         lock (_clientLock)
             return _currentClient;
     }
+
     private async Task HandleIncoming(
         TcpClient client,
         MessageBase msg,
@@ -125,7 +126,7 @@ public class ManagerService
                 break;
         }
     }
-    ///////////////
+
     private void HandleClientInput(ClientFileMessage msg)
     {
         var inputPath = Path.Combine(
@@ -164,7 +165,7 @@ public class ManagerService
         _finalized = false;
         SendClientProgress();
     }
-    ///////////////
+
     private async Task HandleWorkerTask(TaskMessage task, TcpClient client)
     {
         var worker = _workers.First(w => w.Info.Client == client);
@@ -264,7 +265,7 @@ public class ManagerService
             TaskQueues.ExtractQueue.IsEmpty &&
             TaskQueues.TranscribeQueue.IsEmpty;
     }
-    ///////////////
+
     private async Task<bool> FinalizeAsync()
     {
         var client = GetCurrentClient();
@@ -273,6 +274,8 @@ public class ManagerService
         var inputFile = Directory.GetFiles(_config.Directories.Input).FirstOrDefault();
         if (inputFile == null)
             return false;
+
+        SendClientProgress();
 
         var inputName = Path.GetFileNameWithoutExtension(inputFile);
         var outputPath = Path.Combine(

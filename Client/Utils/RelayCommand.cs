@@ -7,10 +7,10 @@ namespace Client.Utils;
 
 public abstract class ObservableObject : INotifyPropertyChanged
 {
-    public event PropertyChangedEventHandler PropertyChanged;
+    public event PropertyChangedEventHandler? PropertyChanged;
 
     protected void Set<T>(ref T field, T value,
-        [CallerMemberName] string prop = null)
+        [CallerMemberName] string? prop = null)
     {
         field = value;
         PropertyChanged?.Invoke(this,

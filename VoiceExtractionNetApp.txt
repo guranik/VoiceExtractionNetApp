@@ -26,7 +26,7 @@ speech_transcriptor.py запускается с параметрами --input-
 .py-потоки общаются с Воркерами через stdin/stdout/stderr. После запуска скрипта они инициализируют свои модели для обработки. После полной загрузки весов в память и завершения инициализации .py-потоки отправляют своим воркерам сообщения "READY" в stdout. Воркер ведет учет количества этих полученных сообщений и, когда оно равно extract+transcribe, воркер шлет менеджеру сообщение WorkerHello.
 при завершении обработки файлов .py-потоки удаляют входной файл и пишут Done в stdout. Перед сохранением файлов в выходные папки .py-потоки добавляют префикс i_ ко всем своим выходным файлам, где i - это индекс .py-потока определенного типа в воркере - их задает 
 
-У обработки файла есть 3 этапа:
+У обработки файла есть 4 этапа:
 1. Алгоритм дробления:
 Когда пользователь посылает задачу, менеджер кладет ее в папку input.
 Из appsettings.json извлекаются переменые MaxSegmentDurationSec и SplitTranscribeRatio. Затем происходит цикл: 
@@ -53,7 +53,2115 @@ speech_transcriptor.py запускается с параметрами --input-
 Воркер, получив такое сообщение, кладет файл в папку "transcribe-segments" и обрабатывает его потоком speech_transcriptor.py. 
 После завершения обработки .py-потоком, получившийся .txt файл, у которого будет тот же нейминг что и у входного файла, за исключением расширения .txt а не .wav, и у которого будет префикс "<i>_" - кладут в папку "transcriptions" и отправляют менеджеру(тоже удалив префикс потока из названия), и, затем, воркер удаляет уже этот выходной файл из папки transcriptions. 
 Менеджер результаты транскрипции сохраняет в папке transcriptions, находит файл с таким же названием но с расширением .wav в папке transcribe_segmetns и удаляет его.
+4. После завершения всех экстракций и транскрибаций менеджер собирает все файлы транскрипций в единый файл заполняя его содержанием формата: [<transcription_file_name>]: transcription_file_contents \n
+После дает файлу название совпадающее с исходным - из папки input. 
+Удаляет файл из папки input
+Отправляет файл клиенту и после этого удаляет файл из папки output и вручную очищает все свои очереди после чего он готов снова принимать файлы от клиента.
 
+При получении сообщения TaskMessage от воркера менеджер отправляет сообщение о прогрессе клиенту.
 У менеджера есть очередь входящих сообщений, и, после выполнения 1 этапа(дробления, который менеджер осуществляет средствами NAudio) читает сообщения из очереди.
 Еще должен быть отдельный поток(вернее, 2 потока - для каждого типа задач), который будет отправлять задачи воркерам, у которых имеются свободные потоки, удаляет задачу из очереди и обновляет объект воркера, вызывая метод декремента потоков соответствующего типа. 
 Правда, для этого нужно будет внедрить какие-нибудь примитивы синхронизации: использование lock в методах инкремента и декремента обоих типов потоков и использование ConcurrrentQueue для обоих видов задач
+
+Проект Common:
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace Common.Messages
+{
+    public class AckMessage : MessageBase
+    {
+        public override MessageType Type => MessageType.Ack;
+    }
+}
+
+using Common.Models;
+
+namespace Common.Messages;
+
+public sealed class ClientFileMessage : MessageBase
+{
+    public override MessageType Type => MessageType.ClientFile;
+
+    public FilePayload File { get; set; }
+}
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace Common.Messages
+{
+    public class ClientProgressMessage : MessageBase
+    {
+        public override MessageType Type => MessageType.ClientProgress;
+        public int EarliestExtractSegmentStart { get; set; } 
+        public int InputFileDuration { get; set; }
+        public int LatestTranscriptionEnd { get; set; }
+    }
+}
+
+namespace Common.Messages;
+
+public sealed class HeartBeatMessage : MessageBase
+{
+    public DateTime TimestampUtc { get; init; } = DateTime.UtcNow;
+    public override MessageType Type => MessageType.HeartBeat;
+}
+
+namespace Common.Messages;
+
+public abstract class MessageBase
+{
+    public Guid MessageId { get; init; } = Guid.NewGuid();
+    public virtual MessageType Type { get; init; }
+}
+
+namespace Common.Messages;
+
+public enum MessageType
+{
+    WorkerReady,
+    Ack,
+    HeartBeat,
+
+    ExtractTask,
+    TranscribeTask,
+
+    ClientFile,
+    ClientProgress
+}
+
+using Common.Messages;
+using Common.Models;
+
+public sealed class TaskMessage : MessageBase
+{
+    public override MessageType Type =>
+        TaskType == TaskType.Extract
+            ? MessageType.ExtractTask
+            : MessageType.TranscribeTask;
+
+    public TaskType TaskType { get; set; }
+    public string SourceFileName { get; set; } = null!;
+    public List<FilePayload> Files { get; set; } = new();
+}
+
+namespace Common.Messages;
+
+public enum TaskType
+{
+    Extract,
+    Transcribe
+}
+
+namespace Common.Messages;
+
+public sealed class WorkerReadyMessage : MessageBase
+{
+    public int ExtractThreads { get; init; }
+    public int TranscribeThreads { get; init; }
+    public override MessageType Type => MessageType.WorkerReady;
+}
+
+namespace Common.Models;
+
+public sealed class FilePayload
+{
+    public string FileName { get; init; } = string.Empty;
+
+    public string Base64Content { get; init; } = string.Empty;
+}
+
+using System.Net.Sockets;
+using Common.Messages;
+using Common.Serialization;
+
+namespace Common.Networking;
+
+public sealed class TcpMessageReader
+{
+    private readonly NetworkStream _stream;
+
+    public TcpMessageReader(TcpClient client)
+    {
+        _stream = client.GetStream();
+    }
+
+    public async Task<MessageBase> ReadAsync(CancellationToken ct)
+    {
+        var lengthBuffer = new byte[4];
+        await _stream.ReadExactlyAsync(lengthBuffer, ct);
+
+        int length = BitConverter.ToInt32(lengthBuffer);
+
+        var data = new byte[length];
+        await _stream.ReadExactlyAsync(data, ct);
+
+        return JsonMessageSerializer.Deserialize(data);
+    }
+}
+
+using System.Net.Sockets;
+using System.Text;
+using Common.Messages;
+using Common.Serialization;
+
+namespace Common.Networking;
+
+public sealed class TcpMessageWriter
+{
+    private readonly NetworkStream _stream;
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
+
+    public TcpMessageWriter(TcpClient client)
+    {
+        _stream = client.GetStream();
+    }
+
+    public async Task SendAsync(MessageBase message, CancellationToken ct)
+    {
+        await _sendLock.WaitAsync(ct);
+        try
+        {
+            var data = JsonMessageSerializer.Serialize(message);
+            var lengthPrefix = BitConverter.GetBytes(data.Length);
+
+            await _stream.WriteAsync(lengthPrefix, ct);
+            await _stream.WriteAsync(data, ct);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+}
+
+using System.Text;
+using System.Text.Json;
+using Common.Messages;
+
+namespace Common.Serialization;
+
+public static class JsonMessageSerializer
+{
+    private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
+    private static readonly JsonSerializerOptions Options = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false
+    };
+
+    public static byte[] Serialize(MessageBase message)
+    {
+        var json = JsonSerializer.Serialize(message, message.GetType(), Options);
+        return Utf8NoBom.GetBytes(json);
+    }
+
+    public static MessageBase Deserialize(ReadOnlySpan<byte> data)
+    {
+        var json = Encoding.UTF8.GetString(data);
+        using var doc = JsonDocument.Parse(json);
+
+        var type = (MessageType)doc.RootElement.GetProperty("type").GetInt32();
+
+        return type switch
+        {
+            MessageType.WorkerReady =>
+                JsonSerializer.Deserialize<WorkerReadyMessage>(json, Options)!,
+
+            MessageType.Ack =>
+                JsonSerializer.Deserialize<AckMessage>(json, Options)!,
+
+            MessageType.HeartBeat =>
+                JsonSerializer.Deserialize<HeartBeatMessage>(json, Options)!,
+
+            MessageType.ExtractTask or MessageType.TranscribeTask =>
+                JsonSerializer.Deserialize<TaskMessage>(json, Options)!,
+
+            MessageType.ClientFile =>
+                JsonSerializer.Deserialize<ClientFileMessage>(json, Options)!,
+
+            MessageType.ClientProgress =>
+                JsonSerializer.Deserialize<ClientProgressMessage>(json, Options)!,
+
+            _ => throw new InvalidOperationException(
+                $"Unknown message type {type}")
+        };
+    }
+}
+
+namespace Common.Utils;
+
+public static class Base64FileHelper
+{
+    public static string ReadFileAsBase64(string path)
+        => Convert.ToBase64String(File.ReadAllBytes(path));
+
+    public static void WriteBase64ToFile(string path, string base64)
+        => File.WriteAllBytes(path, Convert.FromBase64String(base64));
+}
+
+
+обработчик извлечения речи speech_extractor.py:
+
+import os
+import sys
+import re
+import argparse
+import traceback
+
+try:
+    import torch
+    import torchaudio
+except Exception as e:
+    print(f"[FATAL] Required audio libraries not found: {e}", file=sys.stderr, flush=True)
+    sys.exit(2)
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+
+META_NAME_RE = re.compile(r"^\d{2}-\d{2}-\d{2}\.wav$")
+MIN_SEGMENT_SEC = 0.5
+DEFAULT_MAX_DURATION = 30
+
+def hhmmss_to_seconds(hhmmss: str) -> float:
+    h, m, s = map(int, hhmmss.split('-'))
+    return h * 3600 + m * 60 + s
+
+
+def seconds_to_hhmmss_ms(sec: float) -> str:
+    if sec < 0:
+        sec = 0.0
+    total_ms = int(round(sec * 1000))
+    h = total_ms // 3_600_000
+    m = (total_ms % 3_600_000) // 60_000
+    s = (total_ms % 60_000) // 1000
+    ms = total_ms % 1000
+    return f"{h:02d}-{m:02d}-{s:02d}.{ms:03d}"
+
+class AudioSplitter:
+    def __init__(self, max_duration_sec=DEFAULT_MAX_DURATION):
+        print("Загрузка модели Silero VAD...", flush=True)
+        self.model, self.utils = torch.hub.load(
+            repo_or_dir='snakers4/silero-vad',
+            model='silero_vad',
+            force_reload=False,
+            onnx=False
+        )
+        self.model.eval()
+        self.max_duration = max(int(max_duration_sec), 5)
+
+    def read_and_prepare_audio(self, file_path):
+        waveform, sample_rate = torchaudio.load(file_path)
+
+        if waveform.dim() == 2:
+            waveform = waveform.mean(dim=0)
+
+        if sample_rate != 16000:
+            waveform = torchaudio.transforms.Resample(sample_rate, 16000)(waveform)
+            sample_rate = 16000
+
+        return waveform, sample_rate
+
+    def detect_speech(self, waveform, sample_rate):
+        get_speech_timestamps = self.utils[0]
+        return get_speech_timestamps(
+            waveform,
+            self.model,
+            sampling_rate=sample_rate,
+            min_speech_duration_ms=500,
+            min_silence_duration_ms=500,
+            speech_pad_ms=200,
+        )
+
+    def split_long_segment(self, start_sample, end_sample, sample_rate):
+        max_len = int(self.max_duration * sample_rate)
+
+        if end_sample - start_sample <= max_len + int(0.5 * sample_rate):
+            return [(start_sample, end_sample)]
+
+        segments = []
+        cur = start_sample
+        while cur < end_sample:
+            nxt = min(cur + max_len, end_sample)
+            segments.append((cur, nxt))
+            cur = nxt
+
+        return segments
+
+    @staticmethod
+    def save_wav(path, data, sample_rate):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        torchaudio.save(path, data, sample_rate)
+
+def cleanup_output_dir(out_dir):
+    try:
+        if os.path.isdir(out_dir):
+            for f in os.listdir(out_dir):
+                try:
+                    os.remove(os.path.join(out_dir, f))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+def validate_meta_filename_or_fail(name: str, out_dir: str):
+    if not META_NAME_RE.match(name):
+        print(f"[FATAL] Некорректное имя мета-сегмента: {name}", file=sys.stderr, flush=True)
+        cleanup_output_dir(out_dir)
+        sys.exit(3)
+
+
+def load_audio_or_fail(splitter, meta_path):
+    try:
+        return splitter.read_and_prepare_audio(meta_path)
+    except Exception as e:
+        raise RuntimeError(f"Ошибка чтения wav: {e}")
+
+
+def run_vad_or_fail(splitter, waveform, sample_rate):
+    try:
+        return splitter.detect_speech(waveform, sample_rate)
+    except Exception as e:
+        raise RuntimeError(f"VAD failed: {e}")
+
+
+def build_final_segments(timestamps, splitter, sample_rate):
+    segments = []
+    for seg in timestamps:
+        segments.extend(
+            splitter.split_long_segment(
+                int(seg["start"]),
+                int(seg["end"]),
+                sample_rate
+            )
+        )
+    return segments
+
+def save_segments(
+    waveform,
+    sample_rate,
+    segments,
+    meta_start_seconds,
+    out_dir,
+    thread_index,
+    splitter
+):
+    os.makedirs(out_dir, exist_ok=True)
+
+    for start_sample, end_sample in segments:
+        try:
+            seg_wave = waveform[start_sample:end_sample].unsqueeze(0)
+            start_sec = meta_start_seconds + start_sample / sample_rate
+            duration = (end_sample - start_sample) / sample_rate
+
+            out_name = (
+                f"{thread_index}_"
+                f"{seconds_to_hhmmss_ms(start_sec)}_"
+                f"{duration:.3f}.wav"
+            )
+
+            splitter.save_wav(
+                os.path.join(out_dir, out_name),
+                seg_wave,
+                sample_rate
+            )
+        except Exception as e:
+            print(f"[ERROR] Failed to save segment: {e}", file=sys.stderr, flush=True)
+
+
+def delete_input_file(path):
+    try:
+        os.remove(path)
+        print(f"[INFO] Deleted input file: {path}", flush=True)
+    except Exception as e:
+        print(f"[WARN] Не удалось удалить входной файл {path}: {e}", file=sys.stderr, flush=True)
+
+def process_one(input_filename, meta_dir, segments_dir, thread_index, splitter):
+    validate_meta_filename_or_fail(input_filename, segments_dir)
+
+    meta_path = os.path.join(meta_dir, input_filename)
+    if not os.path.exists(meta_path):
+        print(f"[ERROR] Input file not found: {meta_path}", file=sys.stderr, flush=True)
+        return
+
+    meta_start_seconds = hhmmss_to_seconds(os.path.splitext(input_filename)[0])
+
+    waveform, sample_rate = load_audio_or_fail(splitter, meta_path)
+    timestamps = run_vad_or_fail(splitter, waveform, sample_rate)
+    final_segments = build_final_segments(timestamps, splitter, sample_rate)
+
+    save_segments(
+        waveform,
+        sample_rate,
+        final_segments,
+        meta_start_seconds,
+        segments_dir,
+        thread_index,
+        splitter
+    )
+
+    delete_input_file(meta_path)
+    print("Split finished for: " + input_filename, flush=True)
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("meta_dir")
+    parser.add_argument("segments_dir")
+    parser.add_argument("thread_index", type=int)
+    parser.add_argument("--max-duration", type=int, default=DEFAULT_MAX_DURATION)
+    args = parser.parse_args()
+
+    splitter = AudioSplitter(args.max_duration)
+
+    print(f"Working dir: {args.meta_dir}")
+    print("READY", flush=True)
+
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            break
+
+        fn = line.strip()
+        if not fn:
+            continue
+
+        print(f"[INFO] Received task: {fn}", flush=True)
+
+        try:
+            process_one(fn, args.meta_dir, args.segments_dir, args.thread_index, splitter)
+            print(f"DONE:{fn}", flush=True)
+
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"[ERROR] {e}\n{traceback.format_exc()}", file=sys.stderr, flush=True)
+            print(f"DONE:{fn}", flush=True)
+
+    print("[INFO] split_audio.py exiting (stdin closed).", flush=True)
+
+
+if __name__ == "__main__":
+    main()
+
+обработчик транскрибации речи speech_transcriptor.py:
+
+import os
+import sys
+import argparse
+import traceback
+
+try:
+    import whisper
+except Exception as e:
+    print(f"[FATAL] whisper library not available: {e}", file=sys.stderr, flush=True)
+    sys.exit(2)
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+def safe_write_text(path: str, text: str):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def build_wav_path(segments_dir: str, filename: str) -> str:
+    return os.path.join(segments_dir, filename)
+
+
+def build_output_path(transcriptions_dir: str, thread_index: int, filename: str) -> str:
+    base_name = os.path.splitext(filename)[0]
+    out_name = f"{thread_index}_{base_name}.txt"
+    return os.path.join(transcriptions_dir, out_name)
+
+def load_model(model_name="small"):
+    try:
+        print(f"Loading Whisper model '{model_name}'...", flush=True)
+        model_dir = r"C:\Users\timof\whisper_models"
+        model = whisper.load_model(model_name, download_root=model_dir)
+        print("Whisper loaded.", flush=True)
+        return model
+    except Exception as e:
+        print(f"[FATAL] Failed to load Whisper model {model_name}: {e}",
+              file=sys.stderr, flush=True)
+        raise
+
+def detect_language(model, audio):
+    mel = whisper.log_mel_spectrogram(audio).to(model.device)
+    _, probs = model.detect_language(mel)
+    return max(probs, key=probs.get) if probs else "unknown"
+
+def decode_audio(model, audio):
+    mel = whisper.log_mel_spectrogram(audio).to(model.device)
+    options = whisper.DecodingOptions(fp16=False)
+    result = whisper.decode(model, mel, options)
+    return result.text.strip()
+
+def transcribe_file(model, file_path):
+    try:
+        print(f"[INFO] Transcribing {file_path}", flush=True)
+        audio = whisper.load_audio(file_path)
+        audio = whisper.pad_or_trim(audio)
+
+        language = detect_language(model, audio)
+        text = decode_audio(model, audio)
+
+        return language, text
+
+    except Exception as e:
+        print(
+            f"[ERROR] Transcription failed for {file_path}: {e}\n{traceback.format_exc()}",
+            file=sys.stderr,
+            flush=True
+        )
+        return None, ""
+
+def process_task(model, segments_dir, transcriptions_dir, thread_index, filename):
+    print(f"[INFO] Received task: {filename}", flush=True)
+
+    wav_path = build_wav_path(segments_dir, filename)
+    if not os.path.exists(wav_path):
+        print(f"[ERROR] Input file not found: {wav_path}", file=sys.stderr, flush=True)
+        print(f"DONE:{filename}", flush=True)
+        return
+
+    language, text = transcribe_file(model, wav_path)
+
+    try:
+        os.remove(wav_path)
+    except Exception as e:
+        print(f"[WARN] Failed to remove {wav_path}: {e}", file=sys.stderr, flush=True)
+
+    out_path = build_output_path(
+        transcriptions_dir,
+        thread_index,
+        filename
+    )
+
+    try:
+        safe_write_text(out_path, text)
+        print(f"[INFO] Saved transcription: {out_path}", flush=True)
+    except Exception as e:
+        print(f"[ERROR] Failed to write transcription {out_path}: {e}",
+              file=sys.stderr, flush=True)
+
+    print(f"DONE:{filename}", flush=True)
+
+
+def stdin_task_loop(model, segments_dir, transcriptions_dir, thread_index):
+    print("READY", flush=True)
+
+    while True:
+        try:
+            line = sys.stdin.readline()
+            if not line:
+                break
+
+            filename = line.strip()
+            if not filename:
+                continue
+
+            process_task(
+                model,
+                segments_dir,
+                transcriptions_dir,
+                thread_index,
+                filename
+            )
+
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print(
+                f"[ERROR] Main loop exception: {e}\n{traceback.format_exc()}",
+                file=sys.stderr,
+                flush=True
+            )
+            sys.exit(5)
+
+    print("[INFO] transcribe_audio.py exiting (stdin closed).", flush=True)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("segments_dir", help="Input directory with segments (wav files)")
+    parser.add_argument("transcriptions_dir", help="Output directory for transcription files")
+    parser.add_argument("thread_index", type=int, help="Index of this python thread (prefix)")
+    parser.add_argument("--model", default="tiny", help="Whisper model to use (default: small)")
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    try:
+        model = load_model(args.model)
+    except Exception:
+        print("[FATAL] Cannot initialize model, exiting.", file=sys.stderr, flush=True)
+        sys.exit(3)
+
+    stdin_task_loop(
+        model=model,
+        segments_dir=args.segments_dir,
+        transcriptions_dir=args.transcriptions_dir,
+        thread_index=args.thread_index
+    )
+
+
+if __name__ == "__main__":
+    main()
+
+Проект Worker:
+
+namespace Worker.Interfaces;
+public interface IWorker : IDisposable
+{
+}
+
+using System;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+using Common.Messages;
+using Common.Networking;
+
+namespace Worker.Network;
+class ManagerConnection : IDisposable
+{
+    private TcpClient _client;
+    private TcpMessageReader _reader;
+    private TcpMessageWriter _writer;
+
+    public bool IsConnected => _client?.Connected == true;
+
+    public bool IsAlive =>
+        _client != null &&
+        _client.Connected &&
+        !(_client.Client.Poll(1, SelectMode.SelectRead) && _client.Client.Available == 0);
+
+    public async Task ConnectAsync(string ip, int port, CancellationToken ct)
+    {
+        _client = new TcpClient();
+        await _client.ConnectAsync(ip, port, ct);
+
+        _reader = new TcpMessageReader(_client);
+        _writer = new TcpMessageWriter(_client);
+    }
+
+    public Task SendAsync(MessageBase msg, CancellationToken ct)
+        => _writer.SendAsync(msg, ct);
+
+    public async Task<MessageBase> ReadAsync(CancellationToken ct)
+        => await _reader.ReadAsync(ct);
+
+    public void Dispose()
+    {
+        _client?.Close();
+        _client?.Dispose();
+    }
+}
+
+using System.IO;
+
+namespace Worker.Utils;
+public static class DirectoryValidator
+{
+    public static void Validate(WorkerConfiguration cfg)
+    {
+        EnsureDir(cfg.Directories.Extract);
+        EnsureDir(cfg.Directories.Transcribe);
+        EnsureDir(cfg.Directories.Results);
+
+        EnsureFile(cfg.PythonScripts.Extractor);
+        EnsureFile(cfg.PythonScripts.Transcriptor);
+    }
+
+    private static void EnsureDir(string path)
+    {
+        if (!Directory.Exists(path))
+            Directory.CreateDirectory(path);
+    }
+
+    private static void EnsureFile(string path)
+    {
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"Required file missing: {path}");
+    }
+}
+
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Worker.Utils;
+
+namespace Worker;
+class Program
+{
+    static async Task Main()
+    {
+        Console.Title = "Worker";
+
+        try
+        {
+            var config = WorkerConfiguration.Load("configuration.json");
+            DirectoryValidator.Validate(config);
+
+            var cts = new CancellationTokenSource();
+            Console.CancelKeyPress += (_, e) =>
+            {
+                e.Cancel = true;
+                cts.Cancel();
+            };
+
+            var worker = new WorkerService(config);
+            await worker.RunAsync(cts.Token);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ERROR] {ex}");
+        }
+    }
+}
+
+using System.Diagnostics;
+using System.Text;
+using Worker.Interfaces;
+
+namespace Worker;
+public class PythonWorker : IWorker
+{
+    public int ThreadIndex { get; }
+
+    private readonly string _outputDir;
+    private readonly Process _process;
+    private TaskCompletionSource<List<string>>? _currentTask;
+    private readonly TaskCompletionSource<bool> _readyTcs =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Ready => _readyTcs.Task;
+
+    public PythonWorker(string script, string inputDir, string outputDir, int index)
+    {
+        ThreadIndex = index;
+        _outputDir = outputDir;
+
+        _process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "python",
+                Arguments = $"\"{script}\" \"{inputDir}\" \"{outputDir}\" {index}",
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            }
+        };
+
+        _process.OutputDataReceived += (_, e) => OnLine(e.Data, false);
+        _process.ErrorDataReceived += (_, e) => OnLine(e.Data, true);
+
+        _process.Start();
+        _process.BeginOutputReadLine();
+        _process.BeginErrorReadLine();
+    }
+
+    public Task WaitIdleAsync()
+    {
+        var tcs = _currentTask;
+        return tcs != null ? tcs.Task : Task.CompletedTask;
+    }
+
+    private void OnLine(string? line, bool isError)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+            return;
+
+        line = line.Trim();
+
+        if (line == "READY")
+        {
+            Console.WriteLine($"[PY-{ThreadIndex}] READY");
+            _readyTcs.TrySetResult(true);
+            return;
+        }
+
+        if (isError)
+        {
+            Console.WriteLine($"[PY-{ThreadIndex}] [ERROR] {line}");
+            return;
+        }
+
+        Console.WriteLine($"[PY-{ThreadIndex}] {line}");
+
+        if (line.StartsWith("DONE"))
+            CompleteTask();
+    }
+
+    private void CompleteTask()
+    {
+        var files = Directory.GetFiles(_outputDir)
+            .Select(Path.GetFileName)
+            .Where(f => f!.StartsWith($"{ThreadIndex}_"))
+            .Select(f => f!.Substring($"{ThreadIndex}_".Length))
+            .ToList();
+
+        _currentTask?.TrySetResult(files);
+        _currentTask = null;
+    }
+
+    public Task<List<string>> SendTask(string fileName)
+    {
+        if (_currentTask != null)
+            throw new InvalidOperationException("Worker already busy");
+
+        _currentTask = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _process.StandardInput.WriteLine(fileName);
+        _process.StandardInput.Flush();
+
+        return _currentTask.Task;
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            if (!_process.HasExited)
+                _process.Kill(true);
+        }
+        catch { }
+    }
+}
+
+using System.IO;
+using System.Text.Json;
+
+namespace Worker;
+public sealed class WorkerConfiguration
+{
+    public ManagerConfig Manager { get; set; } = new();
+    public DirectoryConfig Directories { get; set; } = new();
+    public PythonScriptConfig PythonScripts { get; set; } = new();
+    public WorkerCountConfig Workers { get; set; } = new();
+    public int HeartbeatSeconds { get; set; }
+
+    public static WorkerConfiguration Load(string path)
+    {
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"Configuration file not found: {path}");
+
+        var json = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<WorkerConfiguration>(json,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+    }
+}
+
+public sealed class ManagerConfig
+{
+    public string Ip { get; set; } = "";
+    public int Port { get; set; }
+}
+
+public sealed class DirectoryConfig
+{
+    public string Extract { get; set; } = "";
+    public string Transcribe { get; set; } = "";
+    public string Results { get; set; } = "";
+}
+
+public sealed class PythonScriptConfig
+{
+    public string Extractor { get; set; } = "";
+    public string Transcriptor { get; set; } = "";
+}
+
+public sealed class WorkerCountConfig
+{
+    public int ExtractCount { get; set; }
+    public int TranscribeCount { get; set; }
+}
+
+using System;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Threading.Channels;
+using Common.Messages;
+using Common.Models;
+using Common.Utils;
+using Worker.Network;
+
+namespace Worker;
+public class WorkerService
+{
+    private readonly WorkerConfiguration _cfg;
+    private readonly WorkerState _state = new();
+    private ManagerConnection _connection = null!;
+
+    private readonly Channel<TaskMessage> _taskQueue =
+        Channel.CreateUnbounded<TaskMessage>();
+
+    public WorkerService(WorkerConfiguration cfg)
+    {
+        _cfg = cfg;
+    }
+
+    public async Task RunAsync(CancellationToken ct)
+    {
+        CleanWorkingDirectories();
+        await InitializeWorkersAsync(ct);
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await ConnectAndHandshakeAsync(ct);
+
+                _ = Task.Run(() => HeartbeatLoop(ct), ct);
+                _ = Task.Run(() => DispatcherLoop(ct), ct);
+
+                while (_connection.IsAlive && !ct.IsCancellationRequested)
+                {
+                    var msg = await _connection.ReadAsync(ct);
+                    if (msg is TaskMessage task)
+                        await _taskQueue.Writer.WriteAsync(task, ct);
+                }
+
+                throw new IOException("Manager disconnected");
+            }
+            catch
+            {
+                Console.WriteLine("[WARN] Connection lost. Waiting workers to finish...");
+                await WaitAllWorkersIdleAsync();
+                CleanWorkingDirectories();
+                await Task.Delay(2000, ct);
+            }
+        }
+    }
+
+    private async Task ConnectAndHandshakeAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                _connection = new ManagerConnection();
+                await _connection.ConnectAsync(
+                    _cfg.Manager.Ip,
+                    _cfg.Manager.Port,
+                    ct);
+
+                var hello = new WorkerReadyMessage
+                {
+                    ExtractThreads = _cfg.Workers.ExtractCount,
+                    TranscribeThreads = _cfg.Workers.TranscribeCount
+                };
+
+                await _connection.SendAsync(hello, ct);
+
+                var msg = await _connection.ReadAsync(ct);
+                if (msg is AckMessage ack)
+                {
+                    Console.WriteLine("Handshake success");
+                    return;
+                }
+            }
+            catch
+            {
+                await Task.Delay(2000, ct);
+            }
+        }
+    }
+
+    private async Task InitializeWorkersAsync(CancellationToken ct)
+    {
+        var extractPool = Channel.CreateBounded<PythonWorker>(_cfg.Workers.ExtractCount);
+        var transcribePool = Channel.CreateBounded<PythonWorker>(_cfg.Workers.TranscribeCount);
+
+        for (int i = 0; i < _cfg.Workers.ExtractCount; i++)
+        {
+            var w = new PythonWorker(
+                _cfg.PythonScripts.Extractor,
+                _cfg.Directories.Extract,
+                _cfg.Directories.Transcribe,
+                i);
+
+            _state.AllWorkers.Add(w);
+            await w.Ready;
+            await extractPool.Writer.WriteAsync(w, ct);
+        }
+
+        for (int i = 0; i < _cfg.Workers.TranscribeCount; i++)
+        {
+            var w = new PythonWorker(
+                _cfg.PythonScripts.Transcriptor,
+                _cfg.Directories.Transcribe,
+                _cfg.Directories.Results,
+                i);
+
+            _state.AllWorkers.Add(w);
+            await w.Ready;
+            await transcribePool.Writer.WriteAsync(w, ct);
+        }
+
+        _state.ExtractPool = extractPool;
+        _state.TranscribePool = transcribePool;
+
+        Console.WriteLine("Все Python-воркеры готовы.");
+    }
+
+    private async Task ConnectAsync(CancellationToken ct)
+    {
+        _connection = new ManagerConnection();
+        await _connection.ConnectAsync(_cfg.Manager.Ip, _cfg.Manager.Port, ct);
+
+        await _connection.SendAsync(new WorkerReadyMessage
+        {
+            ExtractThreads = _cfg.Workers.ExtractCount,
+            TranscribeThreads = _cfg.Workers.TranscribeCount
+        }, ct);
+    }
+
+    private async Task DispatcherLoop(CancellationToken ct)
+    {
+        await foreach (var task in _taskQueue.Reader.ReadAllAsync(ct))
+            _ = Task.Run(() => HandleTask(task, ct), ct);
+    }
+
+    private async Task HandleTask(TaskMessage task, CancellationToken ct)
+    {
+        if (task.TaskType == TaskType.Extract)
+            await Process(task, _state.ExtractPool, _cfg.Directories.Extract, ct);
+        else
+            await Process(task, _state.TranscribePool, _cfg.Directories.Transcribe, ct);
+    }
+
+    private async Task Process(
+        TaskMessage task,
+        Channel<PythonWorker> pool,
+        string inputDir,
+        CancellationToken ct)
+    {
+        var worker = await pool.Reader.ReadAsync(ct);
+
+        try
+        {
+            foreach (var f in task.Files)
+                Base64FileHelper.WriteBase64ToFile(
+                    Path.Combine(inputDir, f.FileName),
+                    f.Base64Content);
+
+            var produced = await worker.SendTask(task.SourceFileName);
+
+            var outputDir = task.TaskType == TaskType.Extract
+                ? _cfg.Directories.Transcribe
+                : _cfg.Directories.Results;
+
+            var payload = produced.Select(f =>
+            {
+                var path = Path.Combine(outputDir, $"{worker.ThreadIndex}_{f}");
+                return new FilePayload
+                {
+                    FileName = f,
+                    Base64Content = Base64FileHelper.ReadFileAsBase64(path)
+                };
+            }).ToList();
+
+            await _connection.SendAsync(new TaskMessage
+            {
+                TaskType = task.TaskType,
+                SourceFileName = task.SourceFileName,
+                Files = payload
+            }, ct);
+
+            foreach (var f in produced)
+                TryDelete(Path.Combine(outputDir, $"{worker.ThreadIndex}_{f}"));
+        }
+        finally
+        {
+            await pool.Writer.WriteAsync(worker, ct);
+        }
+    }
+
+    private async Task WaitAllWorkersIdleAsync()
+    {
+        foreach (var w in _state.AllWorkers.OfType<PythonWorker>())
+            await w.WaitIdleAsync();
+    }
+
+    private async Task HeartbeatLoop(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested && _connection.IsAlive)
+        {
+            await Task.Delay(
+                TimeSpan.FromSeconds(_cfg.HeartbeatSeconds),
+                ct);
+
+            await _connection.SendAsync(
+                new HeartBeatMessage(),
+                ct);
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WARN] Failed to delete {path}: {ex.Message}");
+        }
+    }
+
+    private void CleanWorkingDirectories()
+    {
+        foreach (var dir in new[]
+        {
+            _cfg.Directories.Extract,
+            _cfg.Directories.Transcribe,
+            _cfg.Directories.Results
+        })
+        {
+            Directory.CreateDirectory(dir);
+            foreach (var f in Directory.GetFiles(dir))
+                File.Delete(f);
+        }
+    }
+}
+
+using System.Collections.Generic;
+using System.Threading.Channels;
+using Worker.Interfaces;
+
+namespace Worker;
+public class WorkerState
+{
+    public Channel<PythonWorker> ExtractPool { get; set; } = null!;
+    public Channel<PythonWorker> TranscribePool { get; set; } = null!;
+
+    public List<IWorker> AllWorkers { get; } = new();
+
+    public void DisposeAll()
+    {
+        foreach (var w in AllWorkers)
+            w.Dispose();
+
+        AllWorkers.Clear();
+    }
+}
+
+Проект Manager:
+
+using System.Net;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace Manager.Networking;
+public class WorkerListener
+{
+    private readonly TcpListener _listener;
+
+    public WorkerListener(int port)
+    {
+        _listener = new TcpListener(IPAddress.Any, port);
+    }
+
+    public void Start() => _listener.Start();
+
+    public async Task<TcpClient> AcceptAsync(CancellationToken ct)
+        => await _listener.AcceptTcpClientAsync(ct);
+}
+
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+using Common.Messages;
+using Common.Networking;
+
+namespace Manager.Networking;
+public class WorkerSession
+{
+    public WorkerInfo Info { get; }
+    private readonly TcpMessageReader _reader;
+    private readonly TcpMessageWriter _writer;
+
+    public WorkerSession(TcpClient client, WorkerInfo info)
+    {
+        Info = info;
+        _reader = new TcpMessageReader(client);
+        _writer = new TcpMessageWriter(client);
+    }
+
+    public Task SendAsync(MessageBase msg, CancellationToken ct)
+        => _writer.SendAsync(msg, ct);
+
+    public async Task<MessageBase> ReadAsync(CancellationToken ct)
+        => await _reader.ReadAsync(ct);
+}
+
+using System;
+using System.IO;
+using System.Linq;
+using NAudio.Wave;
+
+namespace Manager.Processing;
+public static class AudioSplitter
+{
+    public static void Split(
+        string inputFile,
+        string outputDir,
+        double maxSegSec,
+        double ratio)
+    {
+        Directory.CreateDirectory(outputDir);
+
+        using var reader = new AudioFileReader(inputFile);
+        double pos = 0;
+
+        Console.WriteLine($"Начало дробления файла: {inputFile}");
+
+        while (reader.CurrentTime < reader.TotalTime)
+        {
+            double remaining =
+                reader.TotalTime.TotalSeconds - reader.CurrentTime.TotalSeconds;
+
+            double cut =
+                remaining < maxSegSec * ratio * 2
+                    ? remaining
+                    : maxSegSec * ratio;
+
+            var start = TimeSpan.FromSeconds(pos);
+            var name = $"{start:hh\\-mm\\-ss}.wav";
+            var outPath = Path.Combine(outputDir, name);
+
+            if (!WriteSegment(reader, outPath, cut))
+                break;
+
+            pos += cut;
+        }
+    }
+
+    private static bool WriteSegment(
+        AudioFileReader reader,
+        string path,
+        double seconds)
+    {
+        int samples = (int)(seconds * reader.WaveFormat.SampleRate);
+        var buffer = new float[samples * reader.WaveFormat.Channels];
+
+        int read = reader.Read(buffer, 0, buffer.Length);
+        if (read == 0)
+            return false;
+
+        var bytes = buffer
+            .Take(read)
+            .SelectMany(BitConverter.GetBytes)
+            .ToArray();
+
+        using var ms = new MemoryStream(bytes);
+        using var raw = new RawSourceWaveStream(ms, reader.WaveFormat);
+
+        WaveFileWriter.CreateWaveFile(path, raw);
+
+        return true;
+    }
+
+    public static int GetLatestExtractSegmentStartSec(string extractDir, string inputFile)
+    {
+        if (!Directory.Exists(extractDir))
+            return 0;
+
+        var files = Directory.GetFiles(extractDir);
+        if (files.Length == 0)
+            return inputFile != null
+                ? GetInputDurationSec(inputFile)
+                : 0;
+
+        var file = Directory.GetFiles(extractDir)
+            .OrderBy(f => f)
+            .FirstOrDefault();
+
+        if (file == null)
+            return 0;
+
+        var name = Path.GetFileNameWithoutExtension(file);
+        var parts = name.Split('-').Select(int.Parse).ToArray();
+
+        return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }
+
+    public static int GetInputDurationSec(string inputFile)
+    {
+        using var reader = new AudioFileReader(inputFile);
+        return (int)reader.TotalTime.TotalSeconds;
+    }
+
+    public static int GetLatestTranscriptionEndSec(string transcriptionsDir)
+    {
+        if (!Directory.Exists(transcriptionsDir))
+            return 0;
+
+        var file = Directory.GetFiles(transcriptionsDir, "*.txt")
+            .OrderByDescending(f => f)
+            .FirstOrDefault();
+
+        if (file == null)
+            return 0;
+
+        var name = Path.GetFileNameWithoutExtension(file);
+        var parts = name.Split('_');
+
+        if (parts.Length != 2)
+            return 0;
+
+        double start = ParseStartTime(parts[0]); 
+        double duration = ParseDuration(parts[1]);  
+
+        return (int)Math.Round(start + duration);
+    }
+
+
+    private static double ParseStartTime(string value)
+    {
+        // 00-02-00.000
+        var hms = value.Split('-');
+        if (hms.Length != 3)
+            return 0;
+
+        int h = int.Parse(hms[0]);
+        int m = int.Parse(hms[1]);
+
+        var secParts = hms[2].Split('.');
+        int s = int.Parse(secParts[0]);
+        int ms = secParts.Length > 1 ? int.Parse(secParts[1]) : 0;
+
+        return h * 3600 + m * 60 + s + ms / 1000.0;
+    }
+
+    private static double ParseDuration(string value)
+    {
+        // 30.000
+        return double.Parse(
+            value,
+            System.Globalization.CultureInfo.InvariantCulture
+        );
+    }
+}
+
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Common.Messages;
+using Manager.Networking;
+
+namespace Manager.Scheduling;
+public class TaskDispatcher
+{
+    private readonly List<WorkerSession> _workers;
+
+    public TaskDispatcher(List<WorkerSession> workers)
+    {
+        _workers = workers;
+    }
+
+    public async Task RunAsync(CancellationToken ct)
+    {
+
+        _ = Task.Run(() => DispatchExtract(ct), ct);
+        _ = Task.Run(() => DispatchTranscribe(ct), ct);
+
+        Console.WriteLine("Диспетчеры задач запущены.");
+    }
+
+    private async Task DispatchExtract(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            foreach (var w in _workers.Where(w => w.Info.FreeExtract > 0))
+            {
+                if (!TaskQueues.ExtractQueue.TryDequeue(out var task))
+                    break;
+                w.Info.DecExtract();
+                w.Info.ActiveExtract.Add(task);
+                await w.SendAsync(task, ct);
+
+
+                Console.WriteLine($"Задача Extract отправлена воркеркеру.");
+            }
+
+            await Task.Delay(50, ct);
+        }
+    }
+
+    private async Task DispatchTranscribe(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            foreach (var w in _workers.Where(w => w.Info.FreeTranscribe > 0))
+            {
+
+                if (!TaskQueues.TranscribeQueue.TryDequeue(out var task))
+                    break;
+
+                w.Info.DecTranscribe();
+                w.Info.ActiveTranscribe.Add(task);
+                await w.SendAsync(task, ct);
+
+                Console.WriteLine($"Задача Transcribe отправлена воркеру. Осталось свободных потоков: {w.Info.FreeTranscribe}.");
+            }
+
+            await Task.Delay(50, ct);
+        }
+    }
+}
+
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using Common.Messages;
+
+namespace Manager.Scheduling;
+public static class TaskQueues
+{
+    public static readonly ConcurrentQueue<TaskMessage> ExtractQueue = new();
+    public static readonly ConcurrentQueue<TaskMessage> TranscribeQueue = new();
+
+
+    private static readonly object _lock = new();
+
+
+    public static void ClearAll()
+    {
+        while (ExtractQueue.TryDequeue(out _)) { }
+        while (TranscribeQueue.TryDequeue(out _)) { }
+    }
+}
+
+using System.IO;
+
+namespace Manager.Utils;
+public static class DirectoryValidator
+{
+    public static void ValidateManagerEnvironment(ManagerConfig config)
+    {
+        Ensure(config.Directories.Input);
+        Ensure(config.Directories.ExtractSegments);
+        Ensure(config.Directories.TranscribeSegments);
+        Ensure(config.Directories.Transcriptions);
+        Ensure(config.Directories.Output);
+    }
+
+    private static void Ensure(string dir)
+    {
+        if (!Directory.Exists(dir))
+            Directory.CreateDirectory(dir);
+    }
+}
+
+using System.IO;
+using System.Reflection.Metadata.Ecma335;
+using System.Text.Json;
+
+namespace Manager;
+public class ManagerConfig
+{
+    public NetworkConfig Network { get; set; }
+    public DirectoryConfig Directories { get; set; }
+    public AudioSplitterConfig AudioSplitter { get; set; }
+    public HeartbeatConfig Heartbeat { get; set; }
+
+    public static ManagerConfig Load(string path)
+    {
+        var json = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<ManagerConfig>(json,
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+    }
+}
+
+public class NetworkConfig
+{
+    public int ManagerPort { get; set; }
+    public int FinalizeIdleTimeoutSeconds { get; set; }
+}
+
+public class DirectoryConfig
+{
+    public string Input { get; set; }
+    public string ExtractSegments { get; set; }
+    public string TranscribeSegments { get; set; }
+    public string Transcriptions { get; set; }
+    public string Output { get; set; }
+}
+
+public class AudioSplitterConfig
+{
+    public double MaxExtractSegmentDurationSec { get; set; }
+    public double ExtractTranscribeEfficiency { get; set; }
+}
+
+public class HeartbeatConfig
+{
+    public int WorkerTimeoutSec { get; set; }
+    public int MonitorIntervalMs { get; set; }
+}
+
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+using Common.Messages;
+using Common.Models;
+using Common.Utils;
+using Common.Networking;
+using Manager.Networking;
+using Manager.Scheduling;
+using Manager.Processing;
+
+namespace Manager;
+
+public class ManagerService
+{
+    private readonly ManagerConfig _config;
+    private readonly WorkerListener _listener;
+    private readonly object _clientLock = new();
+    private TcpClient? _currentClient;
+
+    private readonly List<WorkerSession> _workers = new();
+    private readonly ConcurrentQueue<(TcpClient client, MessageBase msg)> _incoming = new();
+
+    private bool _finalized = true;
+
+    public ManagerService(ManagerConfig config)
+    {
+        _config = config;
+        _listener = new WorkerListener(config.Network.ManagerPort);
+    }
+
+    public async Task RunAsync(CancellationToken ct)
+    {
+        CleanDirectories(
+            _config.Directories.Input,
+            _config.Directories.ExtractSegments,
+            _config.Directories.TranscribeSegments,
+            _config.Directories.Transcriptions
+        );
+
+        _listener.Start();
+
+        var tasks = new[]
+        {
+            AcceptLoop(ct),
+            MessageDispatcher(ct),
+            HeartbeatMonitor(ct),
+            new TaskDispatcher(_workers).RunAsync(ct)
+        };
+
+        await Task.WhenAll(tasks);
+    }
+
+    private async Task AcceptLoop(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            var client = await _listener.AcceptAsync(ct);
+            _ = Task.Run(() => ClientReadLoop(client, ct), ct);
+        }
+    }
+
+    private async Task ClientReadLoop(TcpClient client, CancellationToken ct)
+    {
+        var reader = new TcpMessageReader(client);
+
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var msg = await reader.ReadAsync(ct);
+                if (msg != null)
+                    _incoming.Enqueue((client, msg));
+            }
+        }
+        catch
+        {
+            client.Close();
+        }
+    }
+
+    private async Task MessageDispatcher(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            while (_incoming.TryDequeue(out var item))
+                await HandleIncoming(item.client, item.msg, ct);
+
+            await Task.Delay(5, ct);
+        }
+    }
+
+    private TcpClient? GetCurrentClient()
+    {
+        lock (_clientLock)
+            return _currentClient;
+    }
+    private async Task HandleIncoming(
+        TcpClient client,
+        MessageBase msg,
+        CancellationToken ct)
+    {
+        switch (msg)
+        {
+            case WorkerReadyMessage hello:
+                await RegisterWorker(client, hello, ct);
+                break;
+
+            case HeartBeatMessage:
+                GetWorker(client)?.Info.UpdateHeartbeat();
+                break;
+
+            case TaskMessage task:
+                await HandleWorkerTask(task, client);
+                break;
+
+            case ClientFileMessage input:
+                _currentClient = client;
+                HandleClientInput(input);
+                break;
+        }
+    }
+    private void HandleClientInput(ClientFileMessage msg)
+    {
+        var inputPath = Path.Combine(
+            _config.Directories.Input,
+            msg.File.FileName);
+
+        Base64FileHelper.WriteBase64ToFile(
+            inputPath,
+            msg.File.Base64Content);
+
+        AudioSplitter.Split(
+            inputPath,
+            _config.Directories.ExtractSegments,
+            _config.AudioSplitter.MaxExtractSegmentDurationSec,
+            _config.AudioSplitter.ExtractTranscribeEfficiency);
+
+        foreach (var seg in Directory.GetFiles(_config.Directories.ExtractSegments))
+        {
+            var fileName = Path.GetFileName(seg);
+
+            TaskQueues.ExtractQueue.Enqueue(new TaskMessage
+            {
+                TaskType = TaskType.Extract,
+                SourceFileName = fileName,
+                Files =
+                {
+                    new FilePayload
+                    {
+                        FileName = fileName,
+                        Base64Content = Base64FileHelper.ReadFileAsBase64(seg)
+                    }
+                }
+            });
+        }
+
+        _finalized = false;
+        SendClientProgress();
+    }
+    private async Task HandleWorkerTask(TaskMessage task, TcpClient client)
+    {
+        var worker = _workers.First(w => w.Info.Client == client);
+
+        if (task.TaskType == TaskType.Extract)
+        {
+            worker.Info.IncExtract();
+            worker.Info.ActiveExtract.RemoveAll(t =>
+                t.SourceFileName == task.SourceFileName);
+
+            foreach (var f in task.Files)
+            {
+                Base64FileHelper.WriteBase64ToFile(
+                    Path.Combine(_config.Directories.TranscribeSegments, f.FileName),
+                    f.Base64Content);
+
+                TaskQueues.TranscribeQueue.Enqueue(new TaskMessage
+                {
+                    TaskType = TaskType.Transcribe,
+                    SourceFileName = f.FileName,
+                    Files = { f }
+                });
+            }
+
+            File.Delete(Path.Combine(
+                _config.Directories.ExtractSegments,
+                task.SourceFileName));
+
+            SendClientProgress();
+        }
+        else // Transcribe
+        {
+            worker.Info.IncTranscribe();
+            worker.Info.ActiveTranscribe.RemoveAll(t =>
+                t.SourceFileName == task.SourceFileName);
+
+            foreach (var f in task.Files)
+            {
+                Base64FileHelper.WriteBase64ToFile(
+                    Path.Combine(_config.Directories.Transcriptions, f.FileName),
+                    f.Base64Content);
+            }
+
+            File.Delete(Path.Combine(
+                _config.Directories.TranscribeSegments,
+                Path.ChangeExtension(task.SourceFileName, ".wav")));
+
+            SendClientProgress();
+
+            if (!_finalized && CanFinalize())
+            {
+                _finalized = await FinalizeAsync();
+            }
+        }
+    }
+
+    private void SendClientProgress()
+    {
+        if (_currentClient == null || !_currentClient.Connected)
+            return;
+
+        var writer = new TcpMessageWriter(_currentClient);
+
+        var inputFile = Directory
+            .GetFiles(_config.Directories.Input)
+            .FirstOrDefault();
+
+        var latestExtract = inputFile != null
+            ? AudioSplitter.GetLatestExtractSegmentStartSec(
+                _config.Directories.ExtractSegments,
+                inputFile)
+            : 0;
+
+        var duration = inputFile != null
+            ? AudioSplitter.GetInputDurationSec(inputFile)
+            : 0;
+
+        var latestTranscriptionEnd =
+            AudioSplitter.GetLatestTranscriptionEndSec(
+                _config.Directories.Transcriptions);
+
+        var msg = new ClientProgressMessage
+        {
+            EarliestExtractSegmentStart = latestExtract,
+            InputFileDuration = duration,
+            LatestTranscriptionEnd = latestTranscriptionEnd
+        };
+
+        _ = writer.SendAsync(msg, CancellationToken.None);
+    }
+
+    private bool CanFinalize()
+    {
+        return
+            !Directory.GetFiles(_config.Directories.ExtractSegments).Any() &&
+            !Directory.GetFiles(_config.Directories.TranscribeSegments).Any() &&
+            TaskQueues.ExtractQueue.IsEmpty &&
+            TaskQueues.TranscribeQueue.IsEmpty;
+    }
+    private async Task<bool> FinalizeAsync()
+    {
+        var client = GetCurrentClient();
+        if (client == null || !client.Connected)
+            return false;
+        var inputFile = Directory.GetFiles(_config.Directories.Input).FirstOrDefault();
+        if (inputFile == null)
+            return false;
+
+        var inputName = Path.GetFileNameWithoutExtension(inputFile);
+        var outputPath = Path.Combine(
+            _config.Directories.Output,
+            inputName + ".txt");
+
+        using (var sw = new StreamWriter(outputPath))
+        {
+            foreach (var file in Directory
+                .GetFiles(_config.Directories.Transcriptions)
+                .OrderBy(f => f))
+            {
+                await sw.WriteLineAsync(
+                    $"[{Path.GetFileName(file)}]: {File.ReadAllText(file)}");
+            }
+        }
+
+        var msg = new ClientFileMessage
+        {
+            File = new FilePayload
+            {
+                FileName = Path.GetFileName(outputPath),
+                Base64Content = Base64FileHelper.ReadFileAsBase64(outputPath)
+            }
+        };
+
+        await new TcpMessageWriter(client)
+            .SendAsync(msg, CancellationToken.None);
+
+        try
+        {
+            File.Delete(inputFile);
+            File.Delete(outputPath);
+        }
+        catch { }
+
+        Console.WriteLine("Finalization completed and sent to client");
+
+        ResetManagerState();
+        return true;
+    }
+
+    private async Task RegisterWorker(
+        TcpClient client,
+        WorkerReadyMessage hello,
+        CancellationToken ct)
+    {
+        if (GetWorker(client) != null)
+            return;
+
+        var session = new WorkerSession(
+            client,
+            new WorkerInfo(
+                client,
+                hello.ExtractThreads,
+                hello.TranscribeThreads));
+
+        lock (_workers)
+            _workers.Add(session);
+
+        await new TcpMessageWriter(client)
+            .SendAsync(new AckMessage(), ct);
+    }
+
+    private WorkerSession? GetWorker(TcpClient client)
+    {
+        lock (_workers)
+            return _workers.FirstOrDefault(w => w.Info.Client == client);
+    }
+
+    private async Task HeartbeatMonitor(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            var now = DateTime.UtcNow;
+
+            lock (_workers)
+            {
+                var dead = _workers
+                    .Where(w => (now - w.Info.LastHeartbeatUtc)
+                        .TotalSeconds > _config.Heartbeat.WorkerTimeoutSec)
+                    .ToList();
+
+                foreach (var w in dead)
+                {
+                    foreach (var t in w.Info.ActiveExtract)
+                        TaskQueues.ExtractQueue.Enqueue(t);
+
+                    foreach (var t in w.Info.ActiveTranscribe)
+                        TaskQueues.TranscribeQueue.Enqueue(t);
+
+                    w.Info.Dispose();
+                    _workers.Remove(w);
+                }
+            }
+
+            await Task.Delay(_config.Heartbeat.MonitorIntervalMs, ct);
+        }
+    }
+
+    private static void CleanDirectories(params string[] dirs)
+    {
+        foreach (var dir in dirs)
+        {
+            if (!Directory.Exists(dir))
+                continue;
+
+            foreach (var file in Directory.GetFiles(dir))
+            {
+                try { File.Delete(file); } catch { }
+            }
+        }
+    }
+
+    private void ResetManagerState()
+    {
+        CleanDirectories(
+            _config.Directories.Input,
+            _config.Directories.ExtractSegments,
+            _config.Directories.TranscribeSegments,
+            _config.Directories.Transcriptions,
+            _config.Directories.Output
+        );
+
+        TaskQueues.ClearAll();
+
+        lock (_workers)
+        {
+            foreach (var w in _workers)
+            {
+                w.Info.ResetState();
+            }
+        }
+
+        _currentClient = null;
+        _finalized = true;
+
+        Console.WriteLine("Manager state fully reset and ready for next file");
+    }
+}
+
+using Manager.Utils;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace Manager;
+class Program
+{
+    static async Task Main()
+    {
+        Console.Title = "Manager";
+
+        try
+        {
+            var config = ManagerConfig.Load("configuration.json");
+
+            DirectoryValidator.ValidateManagerEnvironment(config);
+
+            using var cts = new CancellationTokenSource();
+            Console.CancelKeyPress += (_, e) =>
+            {
+                e.Cancel = true;
+                cts.Cancel();
+            };
+
+            var manager = new ManagerService(config);
+            await manager.RunAsync(cts.Token);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ERROR] {ex}");
+        }
+    }
+}
+
+using System;
+using System.Net.Sockets;
+
+namespace Manager;
+public class WorkerInfo : IDisposable
+{
+    public TcpClient Client { get; }
+
+    public int TotalExtract { get; }
+    public int TotalTranscribe { get; }
+
+    public int FreeExtract { get; private set; }
+    public int FreeTranscribe { get; private set; }
+
+    private readonly object _lock = new();
+
+    public DateTime LastHeartbeatUtc { get; private set; } = DateTime.UtcNow;
+
+    public List<TaskMessage> ActiveExtract { get; } = new();
+    public List<TaskMessage> ActiveTranscribe { get; } = new();
+
+    public WorkerInfo(TcpClient client, int extract, int transcribe)
+    {
+        Client = client;
+        TotalExtract = extract;
+        TotalTranscribe = transcribe;
+        FreeExtract = extract;
+        FreeTranscribe = transcribe;
+    }
+
+    public void UpdateHeartbeat()
+        => LastHeartbeatUtc = DateTime.UtcNow;
+
+    public void DecExtract()
+    {
+        lock (_lock)
+        {
+            if (FreeExtract <= 0)
+                throw new InvalidOperationException("No free extract threads");
+            FreeExtract--;
+        }
+    }
+
+    public void IncExtract()
+    {
+        lock (_lock)
+        {
+            if (FreeExtract >= TotalExtract)
+                throw new InvalidOperationException("Extract overflow");
+            FreeExtract++;
+        }
+    }
+
+    public void DecTranscribe()
+    {
+        lock (_lock)
+        {
+            if (FreeTranscribe <= 0)
+                throw new InvalidOperationException("No free transcribe threads");
+            FreeTranscribe--;
+        }
+    }
+
+    public void IncTranscribe()
+    {
+        lock (_lock)
+        {
+            if (FreeTranscribe >= TotalTranscribe)
+                throw new InvalidOperationException("Transcribe overflow");
+            FreeTranscribe++;
+        }
+    }
+
+    public void Dispose()
+    {
+        try { Client.Close(); } catch { }
+    }
+
+    public void ResetState()
+    {
+        ActiveExtract.Clear();
+        ActiveTranscribe.Clear();
+    }
+}
