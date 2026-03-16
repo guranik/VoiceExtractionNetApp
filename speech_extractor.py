@@ -18,9 +18,21 @@ except Exception:
     pass
 
 
-META_NAME_RE = re.compile(r"^\d{2}-\d{2}-\d{2}\.wav$")
+# Обновлённый паттерн: SessionId_время.wav
+META_NAME_RE = re.compile(r"^[A-Za-z0-9]+_\d{2}-\d{2}-\d{2}\.wav$")
 MIN_SEGMENT_SEC = 0.5
 DEFAULT_MAX_DURATION = 30
+
+
+def parse_input_filename(filename: str):
+    """Разделяет SessionId и основную часть имени файла с временной меткой."""
+    name_without_ext = filename.rsplit('.', 1)[0]
+    parts = name_without_ext.split('_', 1)
+    if len(parts) != 2:
+        return None, None
+    session_id, time_part = parts
+    return session_id, f"{time_part}.wav"
+
 
 def hhmmss_to_seconds(hhmmss: str) -> float:
     h, m, s = map(int, hhmmss.split('-'))
@@ -36,6 +48,7 @@ def seconds_to_hhmmss_ms(sec: float) -> str:
     s = (total_ms % 60_000) // 1000
     ms = total_ms % 1000
     return f"{h:02d}-{m:02d}-{s:02d}.{ms:03d}"
+
 
 class AudioSplitter:
     def __init__(self, max_duration_sec=DEFAULT_MAX_DURATION):
@@ -92,6 +105,7 @@ class AudioSplitter:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         torchaudio.save(path, data, sample_rate)
 
+
 def cleanup_output_dir(out_dir):
     try:
         if os.path.isdir(out_dir):
@@ -137,7 +151,8 @@ def build_final_segments(timestamps, splitter, sample_rate):
         )
     return segments
 
-#Сохранение сегментов
+
+# Сохранение сегментов
 def save_segments(
     waveform,
     sample_rate,
@@ -145,7 +160,8 @@ def save_segments(
     meta_start_seconds,
     out_dir,
     thread_index,
-    splitter
+    splitter,
+    session_id=None  # Новый параметр
 ):
     os.makedirs(out_dir, exist_ok=True)
 
@@ -155,11 +171,20 @@ def save_segments(
             start_sec = meta_start_seconds + start_sample / sample_rate
             duration = (end_sample - start_sample) / sample_rate
 
-            out_name = (
-                f"{thread_index}_"
-                f"{seconds_to_hhmmss_ms(start_sec)}_"
-                f"{duration:.3f}.wav"
-            )
+            # Формат: {thread_index}_{SessionId}_{время}_{длительность}.wav
+            if session_id:
+                out_name = (
+                    f"{thread_index}_"
+                    f"{session_id}_"
+                    f"{seconds_to_hhmmss_ms(start_sec)}_"
+                    f"{duration:.3f}.wav"
+                )
+            else:
+                out_name = (
+                    f"{thread_index}_"
+                    f"{seconds_to_hhmmss_ms(start_sec)}_"
+                    f"{duration:.3f}.wav"
+                )
 
             splitter.save_wav(
                 os.path.join(out_dir, out_name),
@@ -169,6 +194,7 @@ def save_segments(
         except Exception as e:
             print(f"[ERROR] Failed to save segment: {e}", file=sys.stderr, flush=True)
 
+
 # Удаление входного файла
 def delete_input_file(path):
     try:
@@ -177,16 +203,22 @@ def delete_input_file(path):
     except Exception as e:
         print(f"[WARN] Не удалось удалить входной файл {path}: {e}", file=sys.stderr, flush=True)
 
+
 # Обработка файла
 def process_one(input_filename, meta_dir, segments_dir, thread_index, splitter):
     validate_meta_filename_or_fail(input_filename, segments_dir)
 
+    # Извлекаем SessionId и имя файла с временной меткой
+    session_id, meta_name = parse_input_filename(input_filename)
+    
     meta_path = os.path.join(meta_dir, input_filename)
     if not os.path.exists(meta_path):
         print(f"[ERROR] Input file not found: {meta_path}", file=sys.stderr, flush=True)
         return
 
-    meta_start_seconds = hhmmss_to_seconds(os.path.splitext(input_filename)[0])
+    # Используем только часть с временной меткой для расчёта секунд
+    time_part = meta_name.rsplit('.', 1)[0] if meta_name else os.path.splitext(input_filename)[0].split('_', 1)[-1]
+    meta_start_seconds = hhmmss_to_seconds(time_part)
 
     waveform, sample_rate = load_audio_or_fail(splitter, meta_path)
     timestamps = run_vad_or_fail(splitter, waveform, sample_rate)
@@ -199,11 +231,13 @@ def process_one(input_filename, meta_dir, segments_dir, thread_index, splitter):
         meta_start_seconds,
         segments_dir,
         thread_index,
-        splitter
+        splitter,
+        session_id  # Передаём SessionId
     )
 
     delete_input_file(meta_path)
     print("Split finished for: " + input_filename, flush=True)
+
 
 def main():
     parser = argparse.ArgumentParser()

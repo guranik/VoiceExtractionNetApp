@@ -26,8 +26,18 @@ def build_wav_path(segments_dir: str, filename: str) -> str:
 
 
 def build_output_path(transcriptions_dir: str, thread_index: int, filename: str) -> str:
-    base_name = os.path.splitext(filename)[0]
-    out_name = f"{thread_index}_{base_name}.txt"
+    # Parse filename format: <SessionId>_<MainFileName>.wav
+    name_without_ext = os.path.splitext(filename)[0]
+    
+    # Extract SessionId and MainFileName
+    if "_" in name_without_ext:
+        session_id, main_name = name_without_ext.split("_", 1)
+    else:
+        session_id = "unknown"
+        main_name = name_without_ext
+
+    # Output format: {thread_index}_{SessionId}_{MainFileName}.txt
+    out_name = f"{thread_index}_{session_id}_{main_name}.txt"
     return os.path.join(transcriptions_dir, out_name)
 
 def load_model(model_name="small"):
@@ -99,7 +109,8 @@ def process_task(model, segments_dir, transcriptions_dir, thread_index, filename
         print(f"[INFO] Saved transcription: {out_path}", flush=True)
     except Exception as e:
         print(f"[ERROR] Failed to write transcription {out_path}: {e}",
-              file=sys.stderr, flush=True)
+              file=sys.stderr,
+              flush=True)
 
     print(f"DONE:{filename}", flush=True)
 
