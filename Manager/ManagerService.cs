@@ -20,13 +20,12 @@ public class ManagerService
 {
     private readonly ManagerConfig _config;
     private readonly WorkerListener _listener;
-    private readonly object _clientLock = new();
-    private TcpClient? _currentClient;
-
+    
+    private readonly ConcurrentDictionary<string, ClientSession> _clients = new();
     private readonly List<WorkerSession> _workers = new();
+    private readonly object _workersLock = new();
+    
     private readonly ConcurrentQueue<(TcpClient client, MessageBase msg)> _incoming = new();
-
-    private bool _finalized = true;
 
     public ManagerService(ManagerConfig config)
     {
@@ -40,7 +39,8 @@ public class ManagerService
             _config.Directories.Input,
             _config.Directories.ExtractSegments,
             _config.Directories.TranscribeSegments,
-            _config.Directories.Transcriptions
+            _config.Directories.Transcriptions,
+            _config.Directories.Output
         );
 
         _listener.Start();
@@ -95,10 +95,9 @@ public class ManagerService
         }
     }
 
-    private TcpClient? GetCurrentClient()
+    private ClientSession? GetClientSession(TcpClient client)
     {
-        lock (_clientLock)
-            return _currentClient;
+        return _clients.Values.FirstOrDefault(c => c.Client == client);
     }
 
     private async Task HandleIncoming(
@@ -117,33 +116,35 @@ public class ManagerService
                 break;
 
             case TaskMessage task:
-                await HandleWorkerTask(task, client);
+                await HandleWorkerTask(task, client, ct);
                 break;
 
             case ClientFileMessage input:
-                _currentClient = client;
-                HandleClientInput(input);
+                await HandleClientInput(input, client, ct);
                 break;
         }
     }
 
-    private void HandleClientInput(ClientFileMessage msg)
+    private async Task HandleClientInput(ClientFileMessage msg, TcpClient client, CancellationToken ct)
     {
+        var sessionId = Guid.NewGuid().ToString("N")[..16];
+        var session = new ClientSession(client, sessionId, msg.File.FileName);
+        _clients[sessionId] = session;
+
         var inputPath = Path.Combine(
             _config.Directories.Input,
-            msg.File.FileName);
+            $"{sessionId}.wav");
 
-        Base64FileHelper.WriteBase64ToFile(
-            inputPath,
-            msg.File.Base64Content);
+        Base64FileHelper.WriteBase64ToFile(inputPath, msg.File.Base64Content);
 
         AudioSplitter.Split(
             inputPath,
             _config.Directories.ExtractSegments,
             _config.AudioSplitter.MaxExtractSegmentDurationSec,
-            _config.AudioSplitter.ExtractTranscribeEfficiency);
+            _config.AudioSplitter.ExtractTranscribeEfficiency,
+            sessionId);
 
-        foreach (var seg in Directory.GetFiles(_config.Directories.ExtractSegments))
+        foreach (var seg in Directory.GetFiles(_config.Directories.ExtractSegments, $"{sessionId}_*"))
         {
             var fileName = Path.GetFileName(seg);
 
@@ -151,6 +152,7 @@ public class ManagerService
             {
                 TaskType = TaskType.Extract,
                 SourceFileName = fileName,
+                SessionId = sessionId,
                 Files =
                 {
                     new FilePayload
@@ -162,13 +164,16 @@ public class ManagerService
             });
         }
 
-        _finalized = false;
-        SendClientProgress();
+        await SendClientProgressAsync(session, ct);
     }
 
-    private async Task HandleWorkerTask(TaskMessage task, TcpClient client)
+    private async Task HandleWorkerTask(TaskMessage task, TcpClient client, CancellationToken ct)
     {
-        var worker = _workers.First(w => w.Info.Client == client);
+        var worker = GetWorker(client);
+        if (worker == null) return;
+
+        var sessionId = task.SessionId;
+        if (!_clients.ContainsKey(sessionId)) return;
 
         if (task.TaskType == TaskType.Extract)
         {
@@ -186,6 +191,7 @@ public class ManagerService
                 {
                     TaskType = TaskType.Transcribe,
                     SourceFileName = f.FileName,
+                    SessionId = sessionId,
                     Files = { f }
                 });
             }
@@ -194,7 +200,8 @@ public class ManagerService
                 _config.Directories.ExtractSegments,
                 task.SourceFileName));
 
-            SendClientProgress();
+            var session = _clients[sessionId];
+            await SendClientProgressAsync(session, ct);
         }
         else // Transcribe
         {
@@ -213,30 +220,32 @@ public class ManagerService
                 _config.Directories.TranscribeSegments,
                 Path.ChangeExtension(task.SourceFileName, ".wav")));
 
-            SendClientProgress();
+            var session = _clients[sessionId];
+            await SendClientProgressAsync(session, ct);
 
-            if (!_finalized && CanFinalize())
+            if (!session.IsFinalized && CanFinalize(sessionId))
             {
-                _finalized = await FinalizeAsync();
+                session.IsFinalized = await FinalizeAsync(session, ct);
             }
         }
     }
 
-    private void SendClientProgress()
+    private async Task SendClientProgressAsync(ClientSession session, CancellationToken ct)
     {
-        if (_currentClient == null || !_currentClient.Connected)
+        if (session.Client == null || !session.Client.Connected)
             return;
 
-        var writer = new TcpMessageWriter(_currentClient);
+        var writer = new TcpMessageWriter(session.Client);
 
         var inputFile = Directory
-            .GetFiles(_config.Directories.Input)
+            .GetFiles(_config.Directories.Input, $"{session.SessionId}.*")
             .FirstOrDefault();
 
         var latestExtract = inputFile != null
             ? AudioSplitter.GetLatestExtractSegmentStartSec(
                 _config.Directories.ExtractSegments,
-                inputFile)
+                inputFile,
+                session.SessionId)
             : 0;
 
         var duration = inputFile != null
@@ -245,7 +254,8 @@ public class ManagerService
 
         var latestTranscriptionEnd =
             AudioSplitter.GetLatestTranscriptionEndSec(
-                _config.Directories.Transcriptions);
+                _config.Directories.Transcriptions,
+                session.SessionId);
 
         var msg = new ClientProgressMessage
         {
@@ -254,42 +264,40 @@ public class ManagerService
             LatestTranscriptionEnd = latestTranscriptionEnd
         };
 
-        _ = writer.SendAsync(msg, CancellationToken.None);
+        await writer.SendAsync(msg, ct);
     }
 
-    private bool CanFinalize()
+    private bool CanFinalize(string sessionId)
     {
         return
-            !Directory.GetFiles(_config.Directories.ExtractSegments).Any() &&
-            !Directory.GetFiles(_config.Directories.TranscribeSegments).Any() &&
-            TaskQueues.ExtractQueue.IsEmpty &&
-            TaskQueues.TranscribeQueue.IsEmpty;
+            !Directory.GetFiles(_config.Directories.ExtractSegments, $"{sessionId}_*").Any() &&
+            !Directory.GetFiles(_config.Directories.TranscribeSegments, $"{sessionId}_*").Any() &&
+            TaskQueues.IsEmpty(sessionId);
     }
 
-    private async Task<bool> FinalizeAsync()
+    private async Task<bool> FinalizeAsync(ClientSession session, CancellationToken ct)
     {
-        var client = GetCurrentClient();
-        if (client == null || !client.Connected)
-            return false;
-        var inputFile = Directory.GetFiles(_config.Directories.Input).FirstOrDefault();
-        if (inputFile == null)
+        if (session.Client == null || !session.Client.Connected)
             return false;
 
-        SendClientProgress();
+        await SendClientProgressAsync(session, ct);
 
-        var inputName = Path.GetFileNameWithoutExtension(inputFile);
         var outputPath = Path.Combine(
             _config.Directories.Output,
-            inputName + ".txt");
+            $"{session.SessionId}.txt");
 
         using (var sw = new StreamWriter(outputPath))
         {
             foreach (var file in Directory
-                .GetFiles(_config.Directories.Transcriptions)
+                .GetFiles(_config.Directories.Transcriptions, $"{session.SessionId}_*")
                 .OrderBy(f => f))
             {
+                var fileName = Path.GetFileNameWithoutExtension(file);
+
+                var timeCodePart = fileName.Substring(session.SessionId.Length + 1);
+                
                 await sw.WriteLineAsync(
-                    $"[{Path.GetFileName(file)}]: {File.ReadAllText(file)}");
+                    $"[{timeCodePart}]: {File.ReadAllText(file)}");
             }
         }
 
@@ -297,24 +305,24 @@ public class ManagerService
         {
             File = new FilePayload
             {
-                FileName = Path.GetFileName(outputPath),
+                FileName = session.ClientFileName,
                 Base64Content = Base64FileHelper.ReadFileAsBase64(outputPath)
             }
         };
 
-        await new TcpMessageWriter(client)
-            .SendAsync(msg, CancellationToken.None);
+        await new TcpMessageWriter(session.Client)
+            .SendAsync(msg, ct);
 
         try
         {
-            File.Delete(inputFile);
+            CleanSessionDirectories(session.SessionId);
             File.Delete(outputPath);
         }
         catch { }
 
-        Console.WriteLine("Finalization completed and sent to client");
+        Console.WriteLine($"Finalization completed for session {session.SessionId}");
 
-        ResetManagerState();
+        _clients.TryRemove(session.SessionId, out _);
         return true;
     }
 
@@ -333,7 +341,7 @@ public class ManagerService
                 hello.ExtractThreads,
                 hello.TranscribeThreads));
 
-        lock (_workers)
+        lock (_workersLock)
             _workers.Add(session);
 
         await new TcpMessageWriter(client)
@@ -342,7 +350,7 @@ public class ManagerService
 
     private WorkerSession? GetWorker(TcpClient client)
     {
-        lock (_workers)
+        lock (_workersLock)
             return _workers.FirstOrDefault(w => w.Info.Client == client);
     }
 
@@ -352,7 +360,7 @@ public class ManagerService
         {
             var now = DateTime.UtcNow;
 
-            lock (_workers)
+            lock (_workersLock)
             {
                 var dead = _workers
                     .Where(w => (now - w.Info.LastHeartbeatUtc)
@@ -376,7 +384,7 @@ public class ManagerService
         }
     }
 
-    private static void CleanDirectories(params string[] dirs)
+    private void CleanDirectories(params string[] dirs)
     {
         foreach (var dir in dirs)
         {
@@ -390,29 +398,13 @@ public class ManagerService
         }
     }
 
-    private void ResetManagerState()
+    private void CleanSessionDirectories(string sessionId)
     {
         CleanDirectories(
             _config.Directories.Input,
             _config.Directories.ExtractSegments,
             _config.Directories.TranscribeSegments,
-            _config.Directories.Transcriptions,
-            _config.Directories.Output
+            _config.Directories.Transcriptions
         );
-
-        TaskQueues.ClearAll();
-
-        lock (_workers)
-        {
-            foreach (var w in _workers)
-            {
-                w.Info.ResetState();
-            }
-        }
-
-        _currentClient = null;
-        _finalized = true;
-
-        Console.WriteLine("Manager state fully reset and ready for next file");
     }
 }

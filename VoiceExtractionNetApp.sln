@@ -19,7 +19,13 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Manager.Tests", "Manager.Te
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Client.Tests", "Client.Tests\Client.Tests.csproj", "{61AE80A3-8B73-46FF-9667-2BCAB3213560}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FakeWorker", "FakeWorker\FakeWorker.csproj", "{01420262-CB24-4212-97C8-457162EBE1EC}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "FakeWorker", "FakeWorker\FakeWorker.csproj", "{01420262-CB24-4212-97C8-457162EBE1EC}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "PythonProcessors", "PythonProcessors", "{2C013769-A3A8-4ABE-8EE0-0BD1D913ED28}"
+	ProjectSection(SolutionItems) = preProject
+		..\..\..\..\..\Projects\VoiceExtraction\speech_extractor.py = ..\..\..\..\..\Projects\VoiceExtraction\speech_extractor.py
+		..\..\..\..\..\Projects\VoiceExtraction\speech_transcriptor.py = ..\..\..\..\..\Projects\VoiceExtraction\speech_transcriptor.py
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

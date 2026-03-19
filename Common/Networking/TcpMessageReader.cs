@@ -23,6 +23,7 @@ public sealed class TcpMessageReader
         var data = new byte[length];
         await _stream.ReadExactlyAsync(data, ct);
 
-        return JsonMessageSerializer.Deserialize(data);
+        var message = JsonMessageSerializer.Deserialize(data);
+        return message;
     }
 }

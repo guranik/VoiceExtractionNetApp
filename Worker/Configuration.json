@@ -11,8 +11,8 @@
   },
 
   "PythonScripts": {
-    "Extractor": "C:\\Projects\\VoiceExtraction\\speech_extractor.py",
-    "Transcriptor": "C:\\Projects\\VoiceExtraction\\speech_transcriptor.py"
+    "Extractor": "..\\PythonProcessors\\speech_extractor.py",
+    "Transcriptor": "..\\PythonProcessors\\speech_transcriptor.py"
   },
 
   "Workers": {

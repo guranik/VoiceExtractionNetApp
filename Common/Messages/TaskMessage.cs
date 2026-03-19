@@ -10,5 +10,6 @@ public sealed class TaskMessage : MessageBase
 
     public TaskType TaskType { get; set; }
     public string SourceFileName { get; set; } = null!;
+    public string SessionId { get; set; } = null!;
     public List<FilePayload> Files { get; set; } = new();
 }

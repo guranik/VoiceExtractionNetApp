@@ -31,12 +31,14 @@ public class WorkerService
 
         while (!ct.IsCancellationRequested)
         {
+            using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
             try
             {
                 await ConnectAndHandshakeAsync(ct);
 
-                _ = Task.Run(() => HeartbeatLoop(ct), ct);
-                _ = Task.Run(() => DispatcherLoop(ct), ct);
+                var heartbeatTask = Task.Run(() => HeartbeatLoop(sessionCts.Token), sessionCts.Token);
+                var dispatcherTask = Task.Run(() => DispatcherLoop(sessionCts.Token), sessionCts.Token);
 
                 while (_connection.IsAlive && !ct.IsCancellationRequested)
                 {
@@ -50,6 +52,9 @@ public class WorkerService
             catch
             {
                 Console.WriteLine("[WARN] Connection lost. Waiting workers to finish...");
+
+                sessionCts.Cancel();
+
                 await WaitAllWorkersIdleAsync();
                 CleanWorkingDirectories();
                 await Task.Delay(2000, ct);
@@ -64,10 +69,19 @@ public class WorkerService
             try
             {
                 _connection = new ManagerConnection();
-                await _connection.ConnectAsync(
-                    _cfg.Manager.Ip,
-                    _cfg.Manager.Port,
-                    ct);
+
+                using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                connectCts.CancelAfter(TimeSpan.FromSeconds(5));
+
+                try
+                {
+                    await _connection.ConnectAsync(_cfg.Manager.Ip, _cfg.Manager.Port, connectCts.Token);
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    Console.WriteLine("[WARN] Connection timeout");
+                    continue;
+                }
 
                 var hello = new WorkerReadyMessage
                 {
@@ -189,6 +203,7 @@ public class WorkerService
             {
                 TaskType = task.TaskType,
                 SourceFileName = task.SourceFileName,
+                SessionId = task.SessionId,
                 Files = payload
             }, ct);
 

@@ -4,20 +4,22 @@ using System.Linq;
 using NAudio.Wave;
 
 namespace Manager.Processing;
+
 public static class AudioSplitter
 {
     public static void Split(
         string inputFile,
         string outputDir,
         double maxSegSec,
-        double ratio)
+        double ratio,
+        string sessionId)
     {
         Directory.CreateDirectory(outputDir);
 
         using var reader = new AudioFileReader(inputFile);
         double pos = 0;
 
-        Console.WriteLine($"Начало дробления файла: {inputFile}");
+        Console.WriteLine($"Начало дробления файла: {inputFile} (Session: {sessionId})");
 
         while (reader.CurrentTime < reader.TotalTime)
         {
@@ -30,7 +32,7 @@ public static class AudioSplitter
                     : maxSegSec * ratio;
 
             var start = TimeSpan.FromSeconds(pos);
-            var name = $"{start:hh\\-mm\\-ss}.wav";
+            var name = $"{sessionId}_{start:hh\\-mm\\-ss\\.fff}.wav";
             var outPath = Path.Combine(outputDir, name);
 
             if (!WriteSegment(reader, outPath, cut))
@@ -65,28 +67,38 @@ public static class AudioSplitter
         return true;
     }
 
-    public static int GetLatestExtractSegmentStartSec(string extractDir, string inputFile)
+    public static int GetLatestExtractSegmentStartSec(
+        string extractDir,
+        string inputFile,
+        string sessionId)
     {
         if (!Directory.Exists(extractDir))
             return 0;
 
-        var files = Directory.GetFiles(extractDir);
+        var files = Directory.GetFiles(extractDir, $"{sessionId}_*");
         if (files.Length == 0)
             return inputFile != null
                 ? GetInputDurationSec(inputFile)
                 : 0;
 
-        var file = Directory.GetFiles(extractDir)
-            .OrderBy(f => f)
-            .FirstOrDefault();
-
+        var file = files.OrderBy(f => f).FirstOrDefault();
         if (file == null)
             return 0;
 
         var name = Path.GetFileNameWithoutExtension(file);
-        var parts = name.Split('-').Select(int.Parse).ToArray();
 
-        return parts[0] * 3600 + parts[1] * 60 + parts[2];
+        var timePart = name.Substring(sessionId.Length + 1);
+        var parts = timePart.Split('-');
+        if (parts.Length != 3)
+            return 0;
+
+        int hours = int.Parse(parts[0]);
+        int minutes = int.Parse(parts[1]);
+
+        var secParts = parts[2].Split('.');
+        int seconds = int.Parse(secParts[0]);
+
+        return hours * 3600 + minutes * 60 + seconds;
     }
 
     public static int GetInputDurationSec(string inputFile)
@@ -95,12 +107,14 @@ public static class AudioSplitter
         return (int)reader.TotalTime.TotalSeconds;
     }
 
-    public static int GetLatestTranscriptionEndSec(string transcriptionsDir)
+    public static int GetLatestTranscriptionEndSec(
+        string transcriptionsDir,
+        string sessionId)
     {
         if (!Directory.Exists(transcriptionsDir))
             return 0;
 
-        var file = Directory.GetFiles(transcriptionsDir, "*.txt")
+        var file = Directory.GetFiles(transcriptionsDir, $"{sessionId}_*.txt")
             .OrderByDescending(f => f)
             .FirstOrDefault();
 
@@ -108,17 +122,18 @@ public static class AudioSplitter
             return 0;
 
         var name = Path.GetFileNameWithoutExtension(file);
-        var parts = name.Split('_');
+
+        var nameWithoutPrefix = name.Substring(sessionId.Length + 1);
+        var parts = nameWithoutPrefix.Split('_');
 
         if (parts.Length != 2)
             return 0;
 
-        double start = ParseStartTime(parts[0]); 
-        double duration = ParseDuration(parts[1]);  
+        double start = ParseStartTime(parts[0]);
+        double duration = ParseDuration(parts[1]);
 
         return (int)Math.Round(start + duration);
     }
-
 
     private static double ParseStartTime(string value)
     {
