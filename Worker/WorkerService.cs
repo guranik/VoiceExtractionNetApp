@@ -4,10 +4,10 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Channels;
-using Common.Messages;
-using Common.Models;
-using Common.Utils;
+using Common.Tcp.Models;
 using Worker.Network;
+using Common.Tcp.Messages;
+using Common.Tcp.Utils;
 
 namespace Worker;
 public class WorkerService

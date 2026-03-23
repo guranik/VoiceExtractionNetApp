@@ -19,7 +19,7 @@ except Exception:
 
 
 # Обновлённый паттерн: SessionId_время.wav
-META_NAME_RE = re.compile(r"^[A-Za-z0-9]+_\d{2}-\d{2}-\d{2}\.wav$")
+META_NAME_RE = re.compile(r"^[A-Za-z0-9]+_\d{2}-\d{2}-\d{2}\.\d{3}\.wav$")
 MIN_SEGMENT_SEC = 0.5
 DEFAULT_MAX_DURATION = 30
 
@@ -35,6 +35,10 @@ def parse_input_filename(filename: str):
 
 
 def hhmmss_to_seconds(hhmmss: str) -> float:
+    if '.' in hhmmss:
+        time_part, ms = hhmmss.rsplit('.', 1)
+        h, m, s = map(int, time_part.split('-'))
+        return h * 3600 + m * 60 + s + int(ms) / 1000.0
     h, m, s = map(int, hhmmss.split('-'))
     return h * 3600 + m * 60 + s
 
@@ -117,8 +121,28 @@ def cleanup_output_dir(out_dir):
     except Exception:
         pass
 
+import unicodedata
+
+def normalize_filename(name: str) -> str:
+    # NFKD-нормализация разложит составные символы
+    name = unicodedata.normalize('NFKD', name)
+    # Замена «похожих» символов на ASCII-аналоги
+    replacements = {
+        '\u2013': '-',  # en-dash
+        '\u2014': '-',  # em-dash
+        '\u2212': '-',  # minus sign
+        '\uFF0E': '.',  # full-width dot
+        '\u00A0': ' ',  # non-breaking space
+    }
+    for bad, good in replacements.items():
+        name = name.replace(bad, good)
+    # Удаление остаточных не-ASCII символов (опционально)
+    name = ''.join(c for c in name if ord(c) < 128)
+    return name.strip()
 
 def validate_meta_filename_or_fail(name: str, out_dir: str):
+    print(f"[DEBUG] Raw name: {repr(name)}", file=sys.stderr, flush=True)
+
     if not META_NAME_RE.match(name):
         print(f"[FATAL] Некорректное имя мета-сегмента: {name}", file=sys.stderr, flush=True)
         cleanup_output_dir(out_dir)
@@ -202,6 +226,7 @@ def delete_input_file(path):
 
 
 def process_one(input_filename, meta_dir, segments_dir, thread_index, splitter):
+
     validate_meta_filename_or_fail(input_filename, segments_dir)
 
     session_id, meta_name = parse_input_filename(input_filename)

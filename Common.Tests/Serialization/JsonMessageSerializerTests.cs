@@ -1,5 +1,5 @@
-﻿using Common.Messages;
-using Common.Serialization;
+﻿using Common.Tcp.Messages;
+using Common.Tcp.Serialization;
 using FluentAssertions;
 using Xunit;
 

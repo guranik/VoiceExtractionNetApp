@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Net.Sockets;
+using Common.Tcp.Messages;
 
 namespace Manager;
 public class WorkerInfo : IDisposable

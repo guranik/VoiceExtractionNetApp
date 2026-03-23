@@ -1,7 +1,7 @@
 ﻿using System.Net;
 using System.Net.Sockets;
-using Common.Messages;
-using Common.Networking;
+using Common.Tcp.Networking;
+using Common.Tcp.Messages;
 using FluentAssertions;
 using Xunit;
 

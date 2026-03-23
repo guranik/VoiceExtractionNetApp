@@ -1,4 +1,4 @@
-﻿using Common.Models;
+﻿using Common.Tcp.Models;
 using FluentAssertions;
 using Xunit;
 

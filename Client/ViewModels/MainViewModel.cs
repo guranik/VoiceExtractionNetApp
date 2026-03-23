@@ -6,9 +6,9 @@ using System.Windows.Input;
 using Client.Interfaces;
 using Client.Networking;
 using Client.Utils;
-using Common.Messages;
 using Common.Models;
-using Common.Utils;
+using Common.Tcp.Messages;
+using Common.Tcp.Utils;
 using Microsoft.Win32;
 
 namespace Client.ViewModels;
@@ -165,7 +165,6 @@ public class MainViewModel : ObservableObject
             using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
             using var reader = new BinaryReader(fileStream);
 
-            // Проверка RIFF заголовка
             var riff = reader.ReadBytes(4);
             if (System.Text.Encoding.ASCII.GetString(riff) != "RIFF")
             {
@@ -181,7 +180,6 @@ public class MainViewModel : ObservableObject
                 return false;
             }
 
-            // Ищем блок 'fmt '
             while (fileStream.Position < fileStream.Length)
             {
                 var chunkId = reader.ReadBytes(4);
@@ -193,7 +191,7 @@ public class MainViewModel : ObservableObject
                     var formatTag = reader.ReadInt16();
                     var channels = reader.ReadInt16();
                     var sampleRate = reader.ReadInt32();
-                    reader.BaseStream.Seek(chunkSize - 8, SeekOrigin.Current); // skip остальное
+                    reader.BaseStream.Seek(chunkSize - 8, SeekOrigin.Current);
 
                     if (formatTag != 1)
                     {

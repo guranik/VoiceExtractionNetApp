@@ -2,8 +2,8 @@
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-using Common.Messages;
-using Common.Networking;
+using Common.Tcp.Messages;
+using Common.Tcp.Networking;
 
 namespace Client.Networking;
 
@@ -58,7 +58,6 @@ public class ManagerClient : IDisposable
         }
         catch
         {
-            // соединение умерло — молча выходим
         }
     }
 

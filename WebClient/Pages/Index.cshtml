@@ -1,0 +1,68 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Обработка файла";
+}
+
+<div class="container mt-4">
+    <h2>Обработка файла</h2>
+
+    <form id="processingForm" enctype="multipart/form-data">
+        @Html.AntiForgeryToken()
+        <div class="mb-3">
+            <label for="sourceFile" class="form-label">Исходный файл</label>
+            <input type="file" class="form-control" id="sourceFile" name="file" required />
+            <div class="form-text">Поддерживаются WAV-файлы: моно, 8/16 кГц, 16 бит</div>
+        </div>
+
+        <!-- Поле выбора папки удалено - файл будет автоматически сохранён в Загрузки -->
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i>
+            Результат обработки будет автоматически сохранён в папку <strong>"Загрузки"</strong> вашего браузера.
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg" id="startBtn">Начать обработку</button>
+    </form>
+
+    <hr />
+
+    <!-- Прогресс-бары -->
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <label>Извлечение сегментов</label>
+            <div class="progress" style="height: 25px;">
+                <div id="extractProgress" class="progress-bar progress-bar-striped progress-bar-animated"
+                     role="progressbar" style="width: 0%">
+                    0%
+                </div>
+            </div>
+            <small class="text-muted" id="extractStatus">Ожидание...</small>
+        </div>
+
+        <div class="col-md-6">
+            <label>Транскрипция</label>
+            <div class="progress" style="height: 25px;">
+                <div id="transcribeProgress" class="progress-bar progress-bar-striped progress-bar-animated bg-success"
+                     role="progressbar" style="width: 0%">
+                    0%
+                </div>
+            </div>
+            <small class="text-muted" id="transcribeStatus">Ожидание...</small>
+        </div>
+    </div>
+
+    <div id="resultMessage" class="alert alert-info mt-3 d-none"></div>
+
+    <!-- Кнопка скачивания (появится после обработки) -->
+    <div id="downloadSection" class="mt-3 d-none">
+        <a id="downloadLink" class="btn btn-success btn-lg" download>
+            <i class="bi bi-download"></i> Скачать результат
+        </a>
+        <small class="text-muted d-block mt-2">Файл будет сохранён в папку "Загрузки"</small>
+    </div>
+</div>
+
+@section Scripts {
+    <script src="~/js/wavValidator.js?v=1.1"></script>
+    <script src="~/js/fileProcessor.js"></script>
+}

@@ -1,8 +1,8 @@
-﻿using Common.Messages;
+﻿using Common.Tcp.Messages;
 using FluentAssertions;
 using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities.ObjectModel;
 using Xunit;
-using MessageType = Common.Messages.MessageType;
+using MessageType = Common.Tcp.Messages.MessageType;
 
 public class HeartBeatMessageTests
 {

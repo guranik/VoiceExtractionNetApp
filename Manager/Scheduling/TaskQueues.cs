@@ -1,7 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using Common.Messages;
+using Common.Tcp.Messages;
 
 namespace Manager.Scheduling;
 

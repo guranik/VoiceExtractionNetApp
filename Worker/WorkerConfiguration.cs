@@ -16,8 +16,12 @@ public sealed class WorkerConfiguration
             throw new FileNotFoundException($"Configuration file not found: {path}");
 
         var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<WorkerConfiguration>(json,
+        var config = JsonSerializer.Deserialize<WorkerConfiguration>(json,
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+
+        config.PythonScripts.BaseDirectory = Path.GetDirectoryName(Path.GetFullPath(path));
+
+        return config;
     }
 }
 
@@ -36,8 +40,26 @@ public sealed class DirectoryConfig
 
 public sealed class PythonScriptConfig
 {
-    public string Extractor { get; set; } = "";
-    public string Transcriptor { get; set; } = "";
+    public string? BaseDirectory { get; set; }
+
+    private string _extractor = "";
+    private string _transcriptor = "";
+
+    public string Extractor
+    {
+        get => string.IsNullOrEmpty(BaseDirectory)
+            ? _extractor
+            : Path.GetFullPath(Path.Combine(BaseDirectory, _extractor));
+        set => _extractor = value;
+    }
+
+    public string Transcriptor
+    {
+        get => string.IsNullOrEmpty(BaseDirectory)
+            ? _transcriptor
+            : Path.GetFullPath(Path.Combine(BaseDirectory, _transcriptor));
+        set => _transcriptor = value;
+    }
 }
 
 public sealed class WorkerCountConfig

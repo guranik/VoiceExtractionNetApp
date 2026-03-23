@@ -2,8 +2,8 @@
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-using Common.Messages;
-using Common.Networking;
+using Common.Tcp.Messages;
+using Common.Tcp.Networking;
 
 namespace Worker.Network;
 class ManagerConnection : IDisposable

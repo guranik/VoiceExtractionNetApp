@@ -2,7 +2,7 @@
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Common.Messages;
+using Common.Tcp.Messages;
 using Manager.Networking;
 
 namespace Manager.Scheduling;
@@ -50,7 +50,6 @@ public class TaskDispatcher
         {
             foreach (var w in _workers.Where(w => w.Info.FreeTranscribe > 0))
             {
-
                 if (!TaskQueues.TranscribeQueue.TryDequeue(out var task))
                     break;
 

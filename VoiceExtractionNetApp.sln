@@ -9,23 +9,19 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Worker", "Worker\Worker.csp
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Manager", "Manager\Manager.csproj", "{D90DB383-933A-4F70-BD87-5C7C9BCDA2EF}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Client", "Client\Client.csproj", "{4BA4AFB1-801F-4179-B80E-BAD29E35CD41}"
-EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Common.Tests", "Common.Tests\Common.Tests.csproj", "{73BF28EC-0D93-4C65-8435-E03518EE7A3D}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Worker.Tests", "Worker.Tests\Worker.Tests.csproj", "{3D337F77-C84B-45D1-B96F-22BEB4D0C8CA}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Manager.Tests", "Manager.Tests\Manager.Tests.csproj", "{FED90791-83E1-4968-A15F-2CD88F896A66}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Client.Tests", "Client.Tests\Client.Tests.csproj", "{61AE80A3-8B73-46FF-9667-2BCAB3213560}"
-EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "FakeWorker", "FakeWorker\FakeWorker.csproj", "{01420262-CB24-4212-97C8-457162EBE1EC}"
-EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "PythonProcessors", "PythonProcessors", "{2C013769-A3A8-4ABE-8EE0-0BD1D913ED28}"
 	ProjectSection(SolutionItems) = preProject
 		..\..\..\..\..\Projects\VoiceExtraction\speech_extractor.py = ..\..\..\..\..\Projects\VoiceExtraction\speech_extractor.py
 		..\..\..\..\..\Projects\VoiceExtraction\speech_transcriptor.py = ..\..\..\..\..\Projects\VoiceExtraction\speech_transcriptor.py
 	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WebClient", "WebClient\WebClient.csproj", "{54812D6A-8E10-4AEA-A6F2-C412EC335856}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -45,10 +41,6 @@ Global
 		{D90DB383-933A-4F70-BD87-5C7C9BCDA2EF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D90DB383-933A-4F70-BD87-5C7C9BCDA2EF}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D90DB383-933A-4F70-BD87-5C7C9BCDA2EF}.Release|Any CPU.Build.0 = Release|Any CPU
-		{4BA4AFB1-801F-4179-B80E-BAD29E35CD41}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{4BA4AFB1-801F-4179-B80E-BAD29E35CD41}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{4BA4AFB1-801F-4179-B80E-BAD29E35CD41}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{4BA4AFB1-801F-4179-B80E-BAD29E35CD41}.Release|Any CPU.Build.0 = Release|Any CPU
 		{73BF28EC-0D93-4C65-8435-E03518EE7A3D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{73BF28EC-0D93-4C65-8435-E03518EE7A3D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{73BF28EC-0D93-4C65-8435-E03518EE7A3D}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -61,14 +53,10 @@ Global
 		{FED90791-83E1-4968-A15F-2CD88F896A66}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FED90791-83E1-4968-A15F-2CD88F896A66}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FED90791-83E1-4968-A15F-2CD88F896A66}.Release|Any CPU.Build.0 = Release|Any CPU
-		{61AE80A3-8B73-46FF-9667-2BCAB3213560}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{61AE80A3-8B73-46FF-9667-2BCAB3213560}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{61AE80A3-8B73-46FF-9667-2BCAB3213560}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{61AE80A3-8B73-46FF-9667-2BCAB3213560}.Release|Any CPU.Build.0 = Release|Any CPU
-		{01420262-CB24-4212-97C8-457162EBE1EC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{01420262-CB24-4212-97C8-457162EBE1EC}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{01420262-CB24-4212-97C8-457162EBE1EC}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{01420262-CB24-4212-97C8-457162EBE1EC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{54812D6A-8E10-4AEA-A6F2-C412EC335856}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{54812D6A-8E10-4AEA-A6F2-C412EC335856}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{54812D6A-8E10-4AEA-A6F2-C412EC335856}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{54812D6A-8E10-4AEA-A6F2-C412EC335856}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

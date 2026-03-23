@@ -17,6 +17,10 @@ public class PythonWorker : IWorker
 
     public PythonWorker(string script, string inputDir, string outputDir, int index)
     {
+        var absoluteScriptPath = Path.GetFullPath(script);
+        Console.WriteLine($"[PY-{index}] Script path: {absoluteScriptPath}");
+        Console.WriteLine($"[PY-{index}] Script exists: {File.Exists(absoluteScriptPath)}");
+
         ThreadIndex = index;
         _outputDir = outputDir;
 

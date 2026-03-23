@@ -1,4 +1,4 @@
-﻿using Common.Messages;
+﻿using Common.Tcp.Messages;
 using FluentAssertions;
 using Xunit;
 
