@@ -24,7 +24,6 @@
         setProcessingState(true);
         hideDownloadSection();
 
-        // 🔹 АВТО-КОНВЕРТАЦИЯ ФАЙЛА
         showAlert('🔧 Подготовка аудио (конвертация в WAV)...', 'info');
 
         try {
@@ -66,8 +65,6 @@
         }
     });
 
-    // === Остальные функции (polling, download, progress) без изменений ===
-    // ... (код из предыдущей версии) ...
 
     function startPolling(sessionId) {
         if (pollingInterval) clearInterval(pollingInterval);
@@ -281,8 +278,6 @@ async function convertToWav(file) {
 /**
  * 🔹 Создаёт правильный RIFF/WAVE файл из AudioBuffer
  * 
- * Структура WAV:
- * [RIFF header] [fmt chunk] [data chunk]
  * 
  * @param {AudioBuffer} audioBuffer - Декодированное аудио
  * @param {number} sampleRate - Частота дискретизации (16000)

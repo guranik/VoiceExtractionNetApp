@@ -247,9 +247,9 @@ public class ManagerService
 
     private async Task FinalizeSessionAsync(SessionState session)
     {
-        var outputPath = Path.Combine(_config.Directories.Output, $"{session.SessionId}.txt");
+        var internalOutputPath = Path.Combine(_config.Directories.Output, $"{session.SessionId}.txt");
 
-        using (var sw = new StreamWriter(outputPath))
+        using (var sw = new StreamWriter(internalOutputPath))
         {
             foreach (var file in Directory.GetFiles(_config.Directories.Transcriptions, $"{session.SessionId}_*")
                 .OrderBy(f => f))
@@ -260,12 +260,12 @@ public class ManagerService
             }
         }
 
-        session.ResultFilePath = outputPath;
-        _sessionHub.MarkFinalized(session.SessionId, outputPath);
+        session.ResultFilePath = internalOutputPath;
+        session.ResultFileName = Path.GetFileNameWithoutExtension(session.ClientFileName) + ".txt";
+        _sessionHub.MarkFinalized(session.SessionId, internalOutputPath);
 
         Console.WriteLine($"Finalization completed for session {session.SessionId}");
 
-        // Очищаем временные файлы, но оставляем результат для скачивания
         CleanSessionDirectories(session.SessionId);
     }
 

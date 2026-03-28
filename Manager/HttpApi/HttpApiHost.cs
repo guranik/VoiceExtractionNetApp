@@ -54,11 +54,11 @@ public class HttpApiHost
                 return Results.BadRequest(new { error = "Файл не предоставлен" });
 
             using var stream = file.OpenReadStream();
-            //var (valid, error) = await WavValidator.ValidateAsync(stream, file.FileName);
-            //if (!valid)
-            //    return Results.BadRequest(new { error = error });
+            var (valid, error) = await WavValidator.ValidateAsync(stream, file.FileName);
+            if (!valid)
+                return Results.BadRequest(new { error = error });
 
-            var session = _sessionHub.CreateSession(file.FileName);
+            var session = _sessionHub.CreateSession(Path.GetFileNameWithoutExtension(file.FileName));
 
             var inputPath = Path.Combine(_config.Directories.Input, $"{session.SessionId}.wav");
             using (var fs = new FileStream(inputPath, FileMode.Create, FileAccess.Write))
@@ -84,7 +84,7 @@ public class HttpApiHost
             if (session.IsFinalized && !string.IsNullOrEmpty(session.ResultFilePath) && File.Exists(session.ResultFilePath))
             {
                 var bytes = File.ReadAllBytes(session.ResultFilePath);
-                return Results.File(bytes, "application/octet-stream", Path.GetFileName(session.ResultFilePath));
+                return Results.File(bytes, "text/plain", session.ResultFileName);
             }
 
             return Results.Json(new

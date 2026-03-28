@@ -6,6 +6,8 @@ public class SessionState
 {
     public string SessionId { get; }
     public string ClientFileName { get; set; }
+    public string? ResultFileName { get; set; }   
+
     public bool IsFinalized { get; set; }
     public DateTime LastActivityUtc { get; set; } = DateTime.UtcNow;
     public string? InputFilePath { get; set; }
@@ -18,6 +20,7 @@ public class SessionState
     {
         SessionId = sessionId;
         ClientFileName = clientFileName;
+        ResultFileName = Path.GetFileNameWithoutExtension(clientFileName) + ".txt";
     }
 }
 

@@ -80,13 +80,11 @@ namespace WebClient.Pages
             {
                 var response = await client.GetAsync($"/progress/{sessionId}");
 
-                // === Если готов файл — возвращаем его для скачивания ===
                 if (IsBinaryResponse(response))
                 {
                     return await HandleFileDownloadAsync(response);
                 }
 
-                // === Иначе возвращаем прогресс как JSON ===
                 var json = await response.Content.ReadAsStringAsync();
                 if (response.IsSuccessStatusCode)
                 {
@@ -107,11 +105,6 @@ namespace WebClient.Pages
             }
         }
 
-        // === Вспомогательные методы ===
-
-        /// <summary>
-        /// Возвращает файл так, чтобы браузер предложил сохранить его в "Загрузки"
-        /// </summary>
         private async Task<IActionResult> HandleFileDownloadAsync(HttpResponseMessage response)
         {
             var fileName = response.Content.Headers.ContentDisposition?.FileNameStar ??
@@ -121,8 +114,6 @@ namespace WebClient.Pages
 
             var fileBytes = await response.Content.ReadAsByteArrayAsync();
 
-            // Возвращаем файл с заголовком Content-Disposition: attachment
-            // Это заставляет браузер сохранить файл, а не открыть его
             return File(fileBytes, "application/octet-stream", fileName);
         }
 
