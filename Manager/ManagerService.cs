@@ -60,6 +60,8 @@ public class ManagerService
 
     public async Task ProcessSessionAsync(SessionState session, CancellationToken ct)
     {
+        var retryCount = 0;
+
         if (string.IsNullOrEmpty(session.InputFilePath) || !File.Exists(session.InputFilePath))
             return;
 
@@ -100,6 +102,12 @@ public class ManagerService
             // 4. Финализация
             if (!ct.IsCancellationRequested)
                 await FinalizeSessionAsync(session);
+        }
+        catch (IOException ex)
+        {
+            Console.WriteLine($"Retry {retryCount} for session {session.SessionId}: {ex.Message}");
+            retryCount++;
+            await Task.Delay(1000 * retryCount, ct);
         }
         catch (Exception ex)
         {

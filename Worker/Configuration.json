@@ -17,7 +17,7 @@
 
   "Workers": {
     "ExtractCount": 1,
-    "TranscribeCount": 1
+    "TranscribeCount": 2
   },
 
   "HeartbeatSeconds": 5

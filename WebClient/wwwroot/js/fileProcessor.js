@@ -266,7 +266,7 @@ async function convertToWav(file) {
 
         // 3. Создаём правильный WAV с заголовками
         const wavBlob = audioBufferToWav(monoBuffer, 16000);
-        const newName = file.name.replace(/\.[^/.]+$/, '') + '_converted.wav';
+        const newName = file.name.replace(/\.[^/.]+$/, '') + '.wav';
 
         return { blob: wavBlob, name: newName };
 
