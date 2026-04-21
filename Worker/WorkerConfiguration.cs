@@ -13,7 +13,6 @@ public sealed class WorkerConfiguration
 
     public static WorkerConfiguration Load(string path)
     {
-        // 1. Проверяем наличие файла конфигурации в текущей директории
         if (!File.Exists(path))
         {
             const string launchSettingsFile = "launchSettings.json";
@@ -47,7 +46,6 @@ public sealed class WorkerConfiguration
                 }
             }
 
-            // 2. Повторная проверка после смены директории
             if (!File.Exists(path))
             {
                 Console.WriteLine($"[Error] Configuration file not found: {Path.GetFullPath(path)}");
@@ -55,12 +53,10 @@ public sealed class WorkerConfiguration
             }
         }
 
-        // 3. Стандартная логика чтения и десериализации
         var json = File.ReadAllText(path);
         var config = JsonSerializer.Deserialize<WorkerConfiguration>(json,
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
 
-        // Устанавливаем базовую директорию скриптов относительно уже актуального пути
         config.PythonScripts.BaseDirectory = Path.GetDirectoryName(Path.GetFullPath(path));
 
         return config;

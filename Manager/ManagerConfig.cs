@@ -66,7 +66,7 @@ public class ManagerConfig
 public class NetworkConfig
 {
     public int ManagerPort { get; set; }
-    public int HttpPort { get; set; } = 8080;
+    public int HttpPort { get; set; }
     public int FinalizeIdleTimeoutSeconds { get; set; }
 }
 

@@ -1,6 +1,7 @@
 {
   "Network": {
-    "ManagerPort": 5000,
+    "ManagerPort": 5001,
+    "HttpPort": 5000,
     "FinalizeIdleTimeoutSeconds": 10
   },
 

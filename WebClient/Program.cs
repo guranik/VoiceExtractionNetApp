@@ -1,11 +1,9 @@
-// Program.cs
 using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Добавление сервисов
 builder.Services.AddRazorPages();
-builder.Services.AddDistributedMemoryCache(); // Для сессии
+builder.Services.AddDistributedMemoryCache();
 builder.Services.AddSession(options =>
 {
     options.IdleTimeout = TimeSpan.FromHours(1);
@@ -14,27 +12,29 @@ builder.Services.AddSession(options =>
 });
 builder.Services.AddHttpClient("ManagerClient", client =>
 {
-    client.BaseAddress = new Uri("http://localhost:8080");
+    client.BaseAddress = new Uri("http://127.0.0.1:5000");
     client.DefaultRequestHeaders.Add("Accept", "application/json");
 });
 builder.Services.Configure<FormOptions>(options =>
 {
     options.MultipartBodyLengthLimit = 500 * 1024 * 1024; // 500 MB
-    options.ValueLengthLimit = 256; // Для полей формы
+    options.ValueLengthLimit = 256;
     options.MultipartHeadersLengthLimit = 1024;
+});
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.ListenAnyIP(8080);
 });
 var app = builder.Build();
 
-// Middleware
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error");
     app.UseHsts();
 }
-app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseRouting();
-app.UseSession(); // Важно: до MapRazorPages
+app.UseSession();
 app.MapRazorPages();
 
 app.Run();

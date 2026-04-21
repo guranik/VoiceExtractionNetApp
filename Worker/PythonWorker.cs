@@ -6,40 +6,51 @@ namespace Worker;
 public class PythonWorker : IWorker
 {
     public int ThreadIndex { get; }
-
     private readonly string _outputDir;
     private readonly Process _process;
     private TaskCompletionSource<List<string>>? _currentTask;
-    private readonly TaskCompletionSource<bool> _readyTcs =
-        new(TaskCreationOptions.RunContinuationsAsynchronously);
-
+    private readonly TaskCompletionSource<bool> _readyTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task Ready => _readyTcs.Task;
+
+    // Resolve deployment folder once at startup
+    private static readonly string AppDir = Path.GetDirectoryName(Environment.ProcessPath)
+                                         ?? AppContext.BaseDirectory;
 
     public PythonWorker(string script, string inputDir, string outputDir, int index)
     {
-        var absoluteScriptPath = Path.GetFullPath(script);
-        Console.WriteLine($"[PY-{index}] Script path: {absoluteScriptPath}");
-        Console.WriteLine($"[PY-{index}] Script exists: {File.Exists(absoluteScriptPath)}");
-
         ThreadIndex = index;
         _outputDir = outputDir;
 
-        _process = new Process
+        var startInfo = new ProcessStartInfo
         {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "python",
-                Arguments = $"\"{script}\" \"{inputDir}\" \"{outputDir}\" {index}",
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8
-            }
+            // 1. Use bundled Python, NOT system "python"
+            FileName = Path.Combine(AppDir, "python", "python.exe"),
+            Arguments = $"\"{script}\" \"{inputDir}\" \"{outputDir}\" {index}",
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+            WorkingDirectory = AppDir // Ensures relative imports in script work
         };
 
+        // 2. Override system defaults for offline operation
+        var env = startInfo.EnvironmentVariables;
+        env["PYTHONUNBUFFERED"] = "1";               // ⚠️ CRITICAL: Disables stdout buffering so "READY"/"DONE" arrive instantly
+        env["PYTHONIOENCODING"] = "utf-8";           // Ensures clean console encoding
+        env["PYTHONDONTWRITEBYTECODE"] = "1";        // Prevents __pycache__ clutter in deployment folder
+        env["PATH"] = $"{Path.Combine(AppDir, "ffmpeg", "bin")};{env["PATH"]}"; // Prepend FFmpeg to PATH
+
+        // 3. Redirect Python framework caches to local deployment folder
+        string cacheDir = Path.Combine(AppDir, "cache");
+        env["TORCH_HOME"] = Path.Combine(cacheDir, "torch");
+        env["TORCH_HUB_DIR"] = Path.Combine(cacheDir, "torch_hub");
+        env["XDG_CACHE_HOME"] = cacheDir;            // Fallback for many Python libs (pip, requests, etc.)
+        env["HF_HOME"] = Path.Combine(cacheDir, "huggingface"); // If HuggingFace is ever added
+
+        _process = new Process { StartInfo = startInfo };
         _process.OutputDataReceived += (_, e) => OnLine(e.Data, false);
         _process.ErrorDataReceived += (_, e) => OnLine(e.Data, true);
 

@@ -8,6 +8,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="input\**" />
+    <Compile Remove="output\**" />
+    <EmbeddedResource Remove="input\**" />
+    <EmbeddedResource Remove="output\**" />
+    <None Remove="input\**" />
+    <None Remove="output\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
 
