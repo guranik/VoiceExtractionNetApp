@@ -98,8 +98,9 @@ public class WorkerService
                     return;
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"[ERROR] Connection attempt failed: {ex.GetType().Name} - {ex.Message}");
                 await Task.Delay(2000, ct);
             }
         }

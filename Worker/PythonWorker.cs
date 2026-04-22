@@ -21,6 +21,13 @@ public class PythonWorker : IWorker
         ThreadIndex = index;
         _outputDir = outputDir;
 
+        var pythonExe = Path.Combine(AppDir, "python", "python.exe");
+        var pythonLib = Path.Combine(AppDir, "python", "Lib");
+        var sitePackages = Path.Combine(AppDir, "python", "Lib", "site-packages");
+        var torchLib = Path.Combine(sitePackages, "torch", "lib");
+        var torchaudioLib = Path.Combine(sitePackages, "torchaudio", "lib");
+        var ffmpegBin = Path.Combine(AppDir, "ffmpeg", "bin");
+
         var startInfo = new ProcessStartInfo
         {
             // 1. Use bundled Python, NOT system "python"
@@ -36,19 +43,28 @@ public class PythonWorker : IWorker
             WorkingDirectory = AppDir // Ensures relative imports in script work
         };
 
-        // 2. Override system defaults for offline operation
+        // === Environment Variables for Offline Operation ===
         var env = startInfo.EnvironmentVariables;
-        env["PYTHONUNBUFFERED"] = "1";               // ⚠️ CRITICAL: Disables stdout buffering so "READY"/"DONE" arrive instantly
-        env["PYTHONIOENCODING"] = "utf-8";           // Ensures clean console encoding
-        env["PYTHONDONTWRITEBYTECODE"] = "1";        // Prevents __pycache__ clutter in deployment folder
-        env["PATH"] = $"{Path.Combine(AppDir, "ffmpeg", "bin")};{env["PATH"]}"; // Prepend FFmpeg to PATH
 
-        // 3. Redirect Python framework caches to local deployment folder
+        // 1. Python runtime isolation (critical for embeddable Python)
+        env["PYTHONHOME"] = Path.Combine(AppDir, "python");
+        env["PYTHONPATH"] = $"{sitePackages};{pythonLib}";
+
+        // 2. I/O protocol reliability
+        env["PYTHONUNBUFFERED"] = "1";        // Instant stdout/stderr delivery for READY/DONE
+        env["PYTHONIOENCODING"] = "utf-8";    // Clean Unicode handling
+        env["PYTHONDONTWRITEBYTECODE"] = "1"; // No __pycache__ clutter
+
+        // 3. Native DLL search path (fixes libtorchaudio.pyd / torch.dll loading)
+        // Prepend our DLL folders so Windows finds them BEFORE system paths
+        env["PATH"] = $"{torchLib};{torchaudioLib};{ffmpegBin};{env["PATH"]}";
+
+        // 4. Redirect framework caches to local deployment folder (zero internet calls)
         string cacheDir = Path.Combine(AppDir, "cache");
         env["TORCH_HOME"] = Path.Combine(cacheDir, "torch");
         env["TORCH_HUB_DIR"] = Path.Combine(cacheDir, "torch_hub");
-        env["XDG_CACHE_HOME"] = cacheDir;            // Fallback for many Python libs (pip, requests, etc.)
-        env["HF_HOME"] = Path.Combine(cacheDir, "huggingface"); // If HuggingFace is ever added
+        env["XDG_CACHE_HOME"] = cacheDir;           // Fallback for pip, requests, etc.
+        env["HF_HOME"] = Path.Combine(cacheDir, "huggingface"); // Future-proofing
 
         _process = new Process { StartInfo = startInfo };
         _process.OutputDataReceived += (_, e) => OnLine(e.Data, false);
