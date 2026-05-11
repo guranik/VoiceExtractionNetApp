@@ -12,6 +12,7 @@ using Manager.Scheduling;
 using Manager.Processing;
 using Common.Tcp.Models;
 using System.Collections.Concurrent;
+using System.Text;
 
 namespace Manager;
 
@@ -23,6 +24,7 @@ public class ManagerService
 
     private readonly List<WorkerSession> _workers = new();
     private readonly object _workersLock = new();
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _sessionLocks = new();
 
     private readonly ConcurrentQueue<(TcpClient client, MessageBase msg)> _incoming = new();
 
@@ -50,7 +52,7 @@ public class ManagerService
             AcceptLoop(ct),
             MessageDispatcher(ct),
             HeartbeatMonitor(ct),
-            new TaskDispatcher(_workers).RunAsync(ct)
+            new TaskDispatcher(_workers, _workersLock).RunAsync(ct)
         };
 
         await Task.WhenAll(tasks);
@@ -151,16 +153,43 @@ public class ManagerService
     private async Task WorkerReadLoop(TcpClient client, CancellationToken ct)
     {
         var reader = new TcpMessageReader(client);
+
         try
         {
             while (!ct.IsCancellationRequested)
             {
-                var msg = await reader.ReadAsync(ct);
-                if (msg != null)
-                    _incoming.Enqueue((client, msg));
+                var readTask = reader.ReadAsync(ct);
+
+                var completed = await Task.WhenAny(
+                    readTask,
+                    Task.Delay(TimeSpan.FromSeconds(30), ct));
+
+                if (completed != readTask)
+                    throw new TimeoutException("Worker read timeout");
+
+                var msg = await readTask;
+
+                if (msg == null)
+                    throw new IOException("Worker disconnected");
+
+                _incoming.Enqueue((client, msg));
             }
         }
-        catch { client.Close(); }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WARN] Worker read loop terminated: {ex.Message}");
+
+            var worker = GetWorker(client);
+
+            if (worker != null)
+                worker.Disconnect();
+
+            try
+            {
+                client.Close();
+            }
+            catch { }
+        }
     }
 
     private async Task MessageDispatcher(CancellationToken ct)
@@ -200,8 +229,9 @@ public class ManagerService
         if (task.TaskType == TaskType.Extract)
         {
             worker.Info.IncExtract();
-            worker.Info.ActiveExtract.RemoveAll(t => t.SourceFileName == task.SourceFileName);
-
+            worker.Info.ActiveExtract.TryRemove(
+                task.SourceFileName,
+                out _);
             foreach (var f in task.Files)
             {
                 var targetPath = Path.Combine(_config.Directories.TranscribeSegments, f.FileName);
@@ -222,7 +252,9 @@ public class ManagerService
         else // Transcribe
         {
             worker.Info.IncTranscribe();
-            worker.Info.ActiveTranscribe.RemoveAll(t => t.SourceFileName == task.SourceFileName);
+            worker.Info.ActiveTranscribe.TryRemove(
+                task.SourceFileName,
+                out _);
 
             foreach (var f in task.Files)
             {
@@ -255,39 +287,126 @@ public class ManagerService
 
     private async Task FinalizeSessionAsync(SessionState session)
     {
-        var internalOutputPath = Path.Combine(_config.Directories.Output, $"{session.SessionId}.txt");
+        var semaphore = _sessionLocks.GetOrAdd(session.SessionId, _ => new SemaphoreSlim(1, 1));
+        bool acquired = false;
 
-        using (var sw = new StreamWriter(internalOutputPath))
+        try
         {
-            foreach (var file in Directory.GetFiles(_config.Directories.Transcriptions, $"{session.SessionId}_*")
-                .OrderBy(f => f))
+            acquired = await semaphore.WaitAsync(TimeSpan.FromSeconds(5));
+            if (!acquired)
             {
-                var fileName = Path.GetFileNameWithoutExtension(file);
-                var timeCodePart = fileName.Substring(session.SessionId.Length + 1);
-                await sw.WriteLineAsync($"[{timeCodePart}]: {File.ReadAllText(file)}");
+                Console.WriteLine($"[WARN] Finalization for session {session.SessionId} is already running or timed out.");
+                return;
+            }
+
+            var outputPath = Path.Combine(_config.Directories.Output, $"{session.SessionId}.txt");
+
+            var transcriptionFiles = Directory.GetFiles(_config.Directories.Transcriptions, $"{session.SessionId}_*")
+                                              .OrderBy(f => f)
+                                              .ToList();
+
+            if (transcriptionFiles.Count == 0)
+            {
+                Console.WriteLine($"[WARN] No transcription files found for session {session.SessionId}");
+                return;
+            }
+
+            Console.WriteLine($"[FINALIZE] Processing {transcriptionFiles.Count} files for session {session.SessionId}");
+
+            bool writeSuccess = false;
+            const int maxRetries = 3;
+
+            for (int attempt = 0; attempt < maxRetries; attempt++)
+            {
+                if (attempt > 0) await Task.Delay(500 * attempt);
+
+                try
+                {
+                    await using var sw = new StreamWriter(outputPath, false, Encoding.UTF8);
+
+                    foreach (var file in transcriptionFiles)
+                    {
+                        var fileName = Path.GetFileNameWithoutExtension(file);
+                        var timeCodePart = fileName.Length > session.SessionId.Length + 1
+                            ? fileName.Substring(session.SessionId.Length + 1)
+                            : "unknown";
+
+                        var content = await File.ReadAllTextAsync(file);
+                        await sw.WriteLineAsync($"[{timeCodePart}]: {content}");
+                    }
+
+                    await sw.FlushAsync();
+                    writeSuccess = true;
+                    break;
+                }
+                catch (IOException ex) when (ex.Message.Contains("being used by another process"))
+                {
+                    Console.WriteLine($"[RETRY] File locked. Attempt {attempt + 1}/{maxRetries}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ERROR] Critical write error: {ex.Message}");
+                    throw;
+                }
+            }
+
+            if (!writeSuccess || !File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
+            {
+                throw new IOException($"Output file for session {session.SessionId} was not created or is empty after {maxRetries} attempts.");
+            }
+
+            Console.WriteLine($"[SUCCESS] Output file created: {outputPath} ({new FileInfo(outputPath).Length} bytes)");
+
+            session.ResultFilePath = outputPath;
+            session.ResultFileName = Path.GetFileNameWithoutExtension(session.ClientFileName) + ".txt";
+            _sessionHub.MarkFinalized(session.SessionId, outputPath);
+
+            CleanSessionDirectories(session.SessionId);
+        }
+        finally
+        {
+            if (acquired)
+            {
+                semaphore.Release();
+                if (_sessionLocks.TryGetValue(session.SessionId, out var s) && s.CurrentCount == 1)
+                    _sessionLocks.TryRemove(session.SessionId, out _);
             }
         }
-
-        session.ResultFilePath = internalOutputPath;
-        session.ResultFileName = Path.GetFileNameWithoutExtension(session.ClientFileName) + ".txt";
-        _sessionHub.MarkFinalized(session.SessionId, internalOutputPath);
-
-        Console.WriteLine($"Finalization completed for session {session.SessionId}");
-
-        CleanSessionDirectories(session.SessionId);
     }
 
-    private async Task RegisterWorker(TcpClient client, WorkerReadyMessage hello, CancellationToken ct)
+    private async Task RegisterWorker(
+    TcpClient client,
+    WorkerReadyMessage hello,
+    CancellationToken ct)
     {
-        if (GetWorker(client) != null) return;
+        if (GetWorker(client) != null)
+            return;
 
         var session = new WorkerSession(
             client,
-            new WorkerInfo(client, hello.ExtractThreads, hello.TranscribeThreads));
+            new WorkerInfo(
+                client,
+                hello.ExtractThreads,
+                hello.TranscribeThreads));
 
-        lock (_workersLock) _workers.Add(session);
+        lock (_workersLock)
+        {
+            _workers.Add(session);
+        }
 
-        await new TcpMessageWriter(client).SendAsync(new AckMessage(), ct);
+        try
+        {
+            await session.SendAsync(new AckMessage(), ct);
+        }
+        catch
+        {
+            session.Disconnect();
+
+            lock (_workersLock)
+            {
+                _workers.Remove(session);
+            }
+        }
     }
 
     private WorkerSession? GetWorker(TcpClient client)
@@ -300,22 +419,52 @@ public class ManagerService
     {
         while (!ct.IsCancellationRequested)
         {
-            var now = DateTime.UtcNow;
-            lock (_workersLock)
+            try
             {
-                var dead = _workers
-                    .Where(w => (now - w.Info.LastHeartbeatUtc).TotalSeconds > _config.Heartbeat.WorkerTimeoutSec)
-                    .ToList();
+                var now = DateTime.UtcNow;
+
+                List<WorkerSession> dead;
+
+                lock (_workersLock)
+                {
+                    dead = _workers
+                        .Where(w =>
+                            w.IsDead ||
+                            (now - w.Info.LastHeartbeatUtc).TotalSeconds >
+                            _config.Heartbeat.WorkerTimeoutSec)
+                        .ToList();
+                }
 
                 foreach (var w in dead)
                 {
-                    foreach (var t in w.Info.ActiveExtract) TaskQueues.ExtractQueue.Enqueue(t);
-                    foreach (var t in w.Info.ActiveTranscribe) TaskQueues.TranscribeQueue.Enqueue(t);
+                    Console.WriteLine("[WARN] Worker considered dead.");
+
+                    w.Disconnect();
+
+                    foreach (var t in w.Info.ActiveExtract.Values)
+                        TaskQueues.EnqueueExtract(t);
+
+                    foreach (var t in w.Info.ActiveTranscribe.Values)
+                        TaskQueues.EnqueueTranscribe(t);
+
+                    w.Info.ResetState();
+
+                    lock (_workersLock)
+                    {
+                        _workers.Remove(w);
+                    }
+
                     w.Info.Dispose();
-                    _workers.Remove(w);
                 }
             }
-            await Task.Delay(_config.Heartbeat.MonitorIntervalMs, ct);
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] Heartbeat monitor: {ex.Message}");
+            }
+
+            await Task.Delay(
+                _config.Heartbeat.MonitorIntervalMs,
+                ct);
         }
     }
 

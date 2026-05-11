@@ -1,8 +1,10 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Net.Sockets;
 using Common.Tcp.Messages;
 
 namespace Manager;
+
 public class WorkerInfo : IDisposable
 {
     public TcpClient Client { get; }
@@ -17,14 +19,27 @@ public class WorkerInfo : IDisposable
 
     public DateTime LastHeartbeatUtc { get; private set; } = DateTime.UtcNow;
 
-    public List<TaskMessage> ActiveExtract { get; } = new();
-    public List<TaskMessage> ActiveTranscribe { get; } = new();
+    public ConcurrentDictionary<string, TaskMessage> ActiveExtract { get; } = new();
+    public ConcurrentDictionary<string, TaskMessage> ActiveTranscribe { get; } = new();
 
     public WorkerInfo(TcpClient client, int extract, int transcribe)
     {
         Client = client;
+
+        client.NoDelay = true;
+
+        try
+        {
+            client.Client.SetSocketOption(
+                SocketOptionLevel.Socket,
+                SocketOptionName.KeepAlive,
+                true);
+        }
+        catch { }
+
         TotalExtract = extract;
         TotalTranscribe = transcribe;
+
         FreeExtract = extract;
         FreeTranscribe = transcribe;
     }
@@ -38,6 +53,7 @@ public class WorkerInfo : IDisposable
         {
             if (FreeExtract <= 0)
                 throw new InvalidOperationException("No free extract threads");
+
             FreeExtract--;
         }
     }
@@ -48,6 +64,7 @@ public class WorkerInfo : IDisposable
         {
             if (FreeExtract >= TotalExtract)
                 throw new InvalidOperationException("Extract overflow");
+
             FreeExtract++;
         }
     }
@@ -58,6 +75,7 @@ public class WorkerInfo : IDisposable
         {
             if (FreeTranscribe <= 0)
                 throw new InvalidOperationException("No free transcribe threads");
+
             FreeTranscribe--;
         }
     }
@@ -68,13 +86,24 @@ public class WorkerInfo : IDisposable
         {
             if (FreeTranscribe >= TotalTranscribe)
                 throw new InvalidOperationException("Transcribe overflow");
+
             FreeTranscribe++;
         }
     }
 
     public void Dispose()
     {
-        try { Client.Close(); } catch { }
+        try
+        {
+            Client.Client.Shutdown(SocketShutdown.Both);
+        }
+        catch { }
+
+        try
+        {
+            Client.Close();
+        }
+        catch { }
     }
 
     public void ResetState()

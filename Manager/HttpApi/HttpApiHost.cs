@@ -5,6 +5,8 @@ using Manager.Processing;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Manager.HttpApi;
@@ -29,10 +31,14 @@ public class HttpApiHost
         _logger = logger;
 
         var builder = WebApplication.CreateBuilder();
+        builder.Services.Configure<FormOptions>(options =>
+        {
+            options.MultipartBodyLengthLimit = 3L * 1024 * 1024 * 1024;
+        });
         builder.WebHost.ConfigureKestrel(opts =>
         {
             opts.ListenAnyIP(config.Network.HttpPort);
-            opts.Limits.MaxRequestBodySize = 500 * 1024 * 1024;
+            opts.Limits.MaxRequestBodySize = 1024 * 1024 * 1024;
         });
         _app = builder.Build();
 
@@ -83,8 +89,10 @@ public class HttpApiHost
 
             if (session.IsFinalized && !string.IsNullOrEmpty(session.ResultFilePath) && File.Exists(session.ResultFilePath))
             {
-                var bytes = File.ReadAllBytes(session.ResultFilePath);
-                return Results.File(bytes, "text/plain", session.ResultFileName);
+                return Results.File(
+                    new FileStream(session.ResultFilePath, FileMode.Open, FileAccess.Read, FileShare.Read),
+                    "text/plain",
+                    session.ResultFileName);
             }
 
             return Results.Json(new
