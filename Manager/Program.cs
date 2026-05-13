@@ -51,7 +51,7 @@ class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[ERROR] {ex}");
+            Console.Error.WriteLine($"[FATAL] {ex}");
         }
     }
 

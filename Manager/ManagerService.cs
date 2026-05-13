@@ -13,6 +13,7 @@ using Manager.Processing;
 using Common.Tcp.Models;
 using System.Collections.Concurrent;
 using System.Text;
+using Microsoft.Extensions.Logging;
 
 namespace Manager;
 
@@ -21,6 +22,8 @@ public class ManagerService
     private readonly ManagerConfig _config;
     private readonly WorkerListener _listener;
     private readonly ISessionHub _sessionHub;
+    private readonly ILogger<ManagerService> _logger;
+    private readonly ILoggerFactory _loggerFactory;
 
     private readonly List<WorkerSession> _workers = new();
     private readonly object _workersLock = new();
@@ -28,11 +31,13 @@ public class ManagerService
 
     private readonly ConcurrentQueue<(TcpClient client, MessageBase msg)> _incoming = new();
 
-    public ManagerService(ManagerConfig config, ISessionHub sessionHub)
+    public ManagerService(ManagerConfig config, ISessionHub sessionHub, ILogger<ManagerService> logger, ILoggerFactory loggerFactory)
     {
         _config = config;
         _sessionHub = sessionHub;
+        _logger = logger;
         _listener = new WorkerListener(config.Network.ManagerPort);
+        _loggerFactory = loggerFactory;
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -52,13 +57,12 @@ public class ManagerService
             AcceptLoop(ct),
             MessageDispatcher(ct),
             HeartbeatMonitor(ct),
-            new TaskDispatcher(_workers, _workersLock).RunAsync(ct)
+            new TaskDispatcher(_workers, _workersLock, _loggerFactory.CreateLogger<TaskDispatcher>()).RunAsync(ct)
         };
 
         await Task.WhenAll(tasks);
     }
 
-    // ========== Метод для вызова из HTTP-слоя ==========
 
     public async Task ProcessSessionAsync(SessionState session, CancellationToken ct)
     {
@@ -69,17 +73,16 @@ public class ManagerService
 
         try
         {
-            // 1. Сплиттинг
             AudioSplitter.Split(
                 session.InputFilePath,
                 _config.Directories.ExtractSegments,
                 _config.AudioSplitter.MaxExtractSegmentDurationSec,
                 _config.AudioSplitter.ExtractTranscribeEfficiency,
-                session.SessionId);
+                session.SessionId,
+                _logger);
 
             UpdateSessionProgress(session);
 
-            // 2. Постановка задач в очередь Extract
             foreach (var seg in Directory.GetFiles(_config.Directories.ExtractSegments, $"{session.SessionId}_*"))
             {
                 var fileName = Path.GetFileName(seg);
@@ -94,26 +97,24 @@ public class ManagerService
                 });
             }
 
-            // 3. Ожидание завершения
             while (!CanFinalize(session.SessionId) && !ct.IsCancellationRequested)
             {
                 await Task.Delay(500, ct);
                 UpdateSessionProgress(session);
             }
 
-            // 4. Финализация
             if (!ct.IsCancellationRequested)
                 await FinalizeSessionAsync(session);
         }
         catch (IOException ex)
         {
-            Console.WriteLine($"Retry {retryCount} for session {session.SessionId}: {ex.Message}");
+            _logger.LogWarning($"Retry {retryCount} for session {session.SessionId}: {ex.Message}");
             retryCount++;
             await Task.Delay(1000 * retryCount, ct);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[ERROR] Обработка сессии {session.SessionId}: {ex.Message}");
+            _logger.LogError($"[ERROR] Обработка сессии {session.SessionId}: {ex.Message}");
             _sessionHub.RemoveSession(session.SessionId);
         }
     }
@@ -139,7 +140,6 @@ public class ManagerService
         _sessionHub.UpdateProgress(session.SessionId, latestExtract, duration, latestTranscriptionEnd);
     }
 
-    // ========== TCP-логика для воркеров (без изменений) ==========
 
     private async Task AcceptLoop(CancellationToken ct)
     {
@@ -177,7 +177,7 @@ public class ManagerService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[WARN] Worker read loop terminated: {ex.Message}");
+            _logger.LogWarning($"[WARN] Worker read loop terminated: {ex.Message}");
 
             var worker = GetWorker(client);
 
@@ -295,7 +295,7 @@ public class ManagerService
             acquired = await semaphore.WaitAsync(TimeSpan.FromSeconds(5));
             if (!acquired)
             {
-                Console.WriteLine($"[WARN] Finalization for session {session.SessionId} is already running or timed out.");
+                _logger.LogWarning($"[WARN] Finalization for session {session.SessionId} is already running or timed out.");
                 return;
             }
 
@@ -307,11 +307,11 @@ public class ManagerService
 
             if (transcriptionFiles.Count == 0)
             {
-                Console.WriteLine($"[WARN] No transcription files found for session {session.SessionId}");
+                _logger.LogWarning($"[WARN] No transcription files found for session {session.SessionId}");
                 return;
             }
 
-            Console.WriteLine($"[FINALIZE] Processing {transcriptionFiles.Count} files for session {session.SessionId}");
+            _logger.LogWarning($"[FINALIZE] Processing {transcriptionFiles.Count} files for session {session.SessionId}");
 
             bool writeSuccess = false;
             const int maxRetries = 3;
@@ -341,11 +341,11 @@ public class ManagerService
                 }
                 catch (IOException ex) when (ex.Message.Contains("being used by another process"))
                 {
-                    Console.WriteLine($"[RETRY] File locked. Attempt {attempt + 1}/{maxRetries}");
+                    _logger.LogWarning($"[RETRY] File locked. Attempt {attempt + 1}/{maxRetries}");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[ERROR] Critical write error: {ex.Message}");
+                    _logger.LogWarning($"[ERROR] Critical write error: {ex.Message}");
                     throw;
                 }
             }
@@ -355,7 +355,7 @@ public class ManagerService
                 throw new IOException($"Output file for session {session.SessionId} was not created or is empty after {maxRetries} attempts.");
             }
 
-            Console.WriteLine($"[SUCCESS] Output file created: {outputPath} ({new FileInfo(outputPath).Length} bytes)");
+            _logger.LogWarning($"[SUCCESS] Output file created: {outputPath} ({new FileInfo(outputPath).Length} bytes)");
 
             session.ResultFilePath = outputPath;
             session.ResultFileName = Path.GetFileNameWithoutExtension(session.ClientFileName) + ".txt";
@@ -437,7 +437,7 @@ public class ManagerService
 
                 foreach (var w in dead)
                 {
-                    Console.WriteLine("[WARN] Worker considered dead.");
+                    _logger.LogWarning("[WARN] Worker considered dead.");
 
                     w.Disconnect();
 
@@ -459,7 +459,7 @@ public class ManagerService
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ERROR] Heartbeat monitor: {ex.Message}");
+                _logger.LogWarning($"[ERROR] Heartbeat monitor: {ex.Message}");
             }
 
             await Task.Delay(

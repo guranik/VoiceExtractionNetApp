@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO;
 using System.Linq;
+using Microsoft.Extensions.Logging;
 using NAudio.Wave;
 
 namespace Manager.Processing;
@@ -12,14 +13,15 @@ public static class AudioSplitter
         string outputDir,
         double maxSegSec,
         double ratio,
-        string sessionId)
+        string sessionId,
+        ILogger? logger = null)
     {
         Directory.CreateDirectory(outputDir);
 
         using var reader = new AudioFileReader(inputFile);
         double pos = 0;
 
-        Console.WriteLine($"Начало дробления файла: {inputFile} (Session: {sessionId})");
+        logger?.LogInformation($"Начало дробления файла: {inputFile} (Session: {sessionId})");
 
         while (reader.CurrentTime < reader.TotalTime)
         {

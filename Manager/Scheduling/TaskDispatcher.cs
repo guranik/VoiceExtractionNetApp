@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Common.Tcp.Messages;
 using Manager.Networking;
+using Microsoft.Extensions.Logging;
 
 namespace Manager.Scheduling;
 
@@ -12,13 +13,17 @@ public class TaskDispatcher
 {
     private readonly List<WorkerSession> _workers;
     private readonly object _workersLock;
+    private readonly ILogger<TaskDispatcher> _logger;
+
 
     public TaskDispatcher(
         List<WorkerSession> workers,
-        object workersLock)
+        object workersLock,
+        ILogger<TaskDispatcher> logger)
     {
         _workers = workers;
         _workersLock = workersLock;
+        _logger = logger;
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -26,7 +31,7 @@ public class TaskDispatcher
         _ = Task.Run(() => DispatchExtract(ct), ct);
         _ = Task.Run(() => DispatchTranscribe(ct), ct);
 
-        Console.WriteLine("Диспетчеры задач запущены.");
+        _logger.LogInformation("Диспетчеры задач запущены.");
 
         await Task.CompletedTask;
     }
@@ -57,11 +62,11 @@ public class TaskDispatcher
 
                     await w.SendAsync(task, ct);
 
-                    Console.WriteLine($"Extract task sent.");
+                    _logger.LogInformation($"Extract task sent.");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[ERROR] Extract dispatch failed: {ex.Message}");
+                    _logger.LogError($"[ERROR] Extract dispatch failed: {ex.Message}");
 
                     w.Disconnect();
 
@@ -105,11 +110,11 @@ public class TaskDispatcher
 
                     await w.SendAsync(task, ct);
 
-                    Console.WriteLine($"Transcribe task sent.");
+                    _logger.LogInformation($"Transcribe task sent.");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[ERROR] Transcribe dispatch failed: {ex.Message}");
+                    _logger.LogError($"[ERROR] Transcribe dispatch failed: {ex.Message}");
 
                     w.Disconnect();
 

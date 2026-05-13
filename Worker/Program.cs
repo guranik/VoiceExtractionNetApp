@@ -1,34 +1,37 @@
-﻿using System;
-using System.Diagnostics;
-using System.Threading;
-using System.Threading.Tasks;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Worker.Utils;
+using Worker;
 
-namespace Worker;
 class Program
 {
     static async Task Main()
     {
         Console.Title = "Worker";
 
-        try
-        {
-            var config = WorkerConfiguration.Load("configuration.json");
-            DirectoryValidator.Validate(config);
+        var config = WorkerConfiguration.Load("configuration.json");
+        DirectoryValidator.Validate(config);
 
-            var cts = new CancellationTokenSource();
-            Console.CancelKeyPress += (_, e) =>
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+        var host = Host.CreateDefaultBuilder()
+            .ConfigureServices(services =>
             {
-                e.Cancel = true;
-                cts.Cancel();
-            };
+                services.AddSingleton(config);
+                services.AddSingleton<WorkerService>();
+            })
+            .ConfigureLogging(logging =>
+            {
+                logging.AddConsole();
+                logging.SetMinimumLevel(LogLevel.Information);
 
-            var worker = new WorkerService(config);
-            await worker.RunAsync(cts.Token);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[ERROR] {ex}");
-        }
+                // logging.ClearProviders();
+            })
+            .Build();
+
+        var worker = host.Services.GetRequiredService<WorkerService>();
+        await worker.RunAsync(cts.Token);
     }
 }

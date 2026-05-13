@@ -2,106 +2,66 @@
 using System.IO;
 using System.Linq;
 using System.Threading;
-using System.Threading.Tasks;
 using System.Threading.Channels;
+using System.Threading.Tasks;
 using Common.Tcp.Models;
 using Worker.Network;
 using Common.Tcp.Messages;
 using Common.Tcp.Utils;
 
 namespace Worker;
-public class WorkerService
+
+public class WorkerService : IAsyncDisposable
 {
     private readonly WorkerConfiguration _cfg;
     private readonly WorkerState _state = new();
     private ManagerConnection _connection = null!;
+    private readonly Channel<TaskMessage> _taskQueue = Channel.CreateUnbounded<TaskMessage>();
+    private CancellationTokenSource _globalCts = new();
 
-    private readonly Channel<TaskMessage> _taskQueue =
-        Channel.CreateUnbounded<TaskMessage>();
-
-    public WorkerService(WorkerConfiguration cfg)
-    {
-        _cfg = cfg;
-    }
+    public WorkerService(WorkerConfiguration cfg) => _cfg = cfg;
 
     public async Task RunAsync(CancellationToken ct)
     {
+        _globalCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        ct = _globalCts.Token;
+
         CleanWorkingDirectories();
         await InitializeWorkersAsync(ct);
 
         while (!ct.IsCancellationRequested)
         {
             using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-
             try
             {
-                await ConnectAndHandshakeAsync(ct);
-
+                await ConnectAndHandshakeAsync(sessionCts.Token);
                 var heartbeatTask = Task.Run(() => HeartbeatLoop(sessionCts.Token), sessionCts.Token);
                 var dispatcherTask = Task.Run(() => DispatcherLoop(sessionCts.Token), sessionCts.Token);
 
-                while (_connection.IsAlive && !ct.IsCancellationRequested)
+                while (_connection.IsAlive && !sessionCts.IsCancellationRequested)
                 {
-                    var msg = await _connection.ReadAsync(ct);
+                    var msg = await _connection.ReadAsync(sessionCts.Token);
                     if (msg is TaskMessage task)
-                        await _taskQueue.Writer.WriteAsync(task, ct);
+                        await _taskQueue.Writer.WriteAsync(task, sessionCts.Token);
                 }
-
-                throw new IOException("Manager disconnected");
+                throw new IOException("Manager disconnected or session cancelled");
             }
-            catch
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                Console.WriteLine("[WARN] Connection lost. Waiting workers to finish...");
-
-                sessionCts.Cancel();
-
-                await WaitAllWorkersIdleAsync();
-                CleanWorkingDirectories();
-                await Task.Delay(2000, ct);
-            }
-        }
-    }
-
-    private async Task ConnectAndHandshakeAsync(CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
-        {
-            try
-            {
-                _connection = new ManagerConnection();
-
-                using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                connectCts.CancelAfter(TimeSpan.FromSeconds(5));
-
-                try
-                {
-                    await _connection.ConnectAsync(_cfg.Manager.Ip, _cfg.Manager.Port, connectCts.Token);
-                }
-                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                {
-                    Console.WriteLine("[WARN] Connection timeout");
-                    continue;
-                }
-
-                var hello = new WorkerReadyMessage
-                {
-                    ExtractThreads = _cfg.Workers.ExtractCount,
-                    TranscribeThreads = _cfg.Workers.TranscribeCount
-                };
-
-                await _connection.SendAsync(hello, ct);
-
-                var msg = await _connection.ReadAsync(ct);
-                if (msg is AckMessage ack)
-                {
-                    Console.WriteLine("Handshake success");
-                    return;
-                }
+                Console.WriteLine("[INFO] Graceful shutdown requested.");
+                return;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ERROR] Connection attempt failed: {ex.GetType().Name} - {ex.Message}");
+                Console.WriteLine($"[WARN] Connection lost: {ex.Message}. Waiting workers...");
+                sessionCts.Cancel();
+                await WaitAllWorkersIdleAsync(ct);
+                CleanWorkingDirectories();
                 await Task.Delay(2000, ct);
+            }
+            finally
+            {
+                _connection?.Dispose();
             }
         }
     }
@@ -113,12 +73,7 @@ public class WorkerService
 
         for (int i = 0; i < _cfg.Workers.ExtractCount; i++)
         {
-            var w = new PythonWorker(
-                _cfg.PythonScripts.Extractor,
-                _cfg.Directories.Extract,
-                _cfg.Directories.Transcribe,
-                i);
-
+            var w = new PythonWorker(_cfg.PythonScripts.Extractor, _cfg.Directories.Extract, _cfg.Directories.Transcribe, i);
             _state.AllWorkers.Add(w);
             await w.Ready;
             await extractPool.Writer.WriteAsync(w, ct);
@@ -126,12 +81,7 @@ public class WorkerService
 
         for (int i = 0; i < _cfg.Workers.TranscribeCount; i++)
         {
-            var w = new PythonWorker(
-                _cfg.PythonScripts.Transcriptor,
-                _cfg.Directories.Transcribe,
-                _cfg.Directories.Results,
-                i);
-
+            var w = new PythonWorker(_cfg.PythonScripts.Transcriptor, _cfg.Directories.Transcribe, _cfg.Directories.Results, i);
             _state.AllWorkers.Add(w);
             await w.Ready;
             await transcribePool.Writer.WriteAsync(w, ct);
@@ -139,57 +89,74 @@ public class WorkerService
 
         _state.ExtractPool = extractPool;
         _state.TranscribePool = transcribePool;
-
         Console.WriteLine("Все Python-воркеры готовы.");
     }
 
-    private async Task ConnectAsync(CancellationToken ct)
+    private async Task ConnectAndHandshakeAsync(CancellationToken ct)
     {
-        _connection = new ManagerConnection();
-        await _connection.ConnectAsync(_cfg.Manager.Ip, _cfg.Manager.Port, ct);
-
-        await _connection.SendAsync(new WorkerReadyMessage
+        while (!ct.IsCancellationRequested)
         {
-            ExtractThreads = _cfg.Workers.ExtractCount,
-            TranscribeThreads = _cfg.Workers.TranscribeCount
-        }, ct);
+            try
+            {
+                _connection = new ManagerConnection();
+                using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                connectCts.CancelAfter(TimeSpan.FromSeconds(5));
+                await _connection.ConnectAsync(_cfg.Manager.Ip, _cfg.Manager.Port, connectCts.Token);
+
+                await _connection.SendAsync(new WorkerReadyMessage
+                {
+                    ExtractThreads = _cfg.Workers.ExtractCount,
+                    TranscribeThreads = _cfg.Workers.TranscribeCount
+                }, ct);
+
+                var msg = await _connection.ReadAsync(ct);
+                if (msg is AckMessage)
+                {
+                    Console.WriteLine("Handshake success");
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] Connection attempt: {ex.GetType().Name} - {ex.Message}");
+                _connection?.Dispose();
+                await Task.Delay(2000, ct);
+            }
+        }
     }
 
     private async Task DispatcherLoop(CancellationToken ct)
     {
         await foreach (var task in _taskQueue.Reader.ReadAllAsync(ct))
-            _ = Task.Run(() => HandleTask(task, ct), ct);
+        {
+            // Fire-and-forget с гарантированной обработкой ошибок
+            _ = Task.Run(async () =>
+            {
+                try { await HandleTask(task, ct); }
+                catch (Exception ex) { Console.Error.WriteLine($"[TASK FAILED] {ex.Message}"); }
+            }, ct);
+        }
     }
 
     private async Task HandleTask(TaskMessage task, CancellationToken ct)
     {
-        if (task.TaskType == TaskType.Extract)
-            await Process(task, _state.ExtractPool, _cfg.Directories.Extract, ct);
-        else
-            await Process(task, _state.TranscribePool, _cfg.Directories.Transcribe, ct);
+        var pool = task.TaskType == TaskType.Extract ? _state.ExtractPool : _state.TranscribePool;
+        var inputDir = task.TaskType == TaskType.Extract ? _cfg.Directories.Extract : _cfg.Directories.Transcribe;
+        await Process(task, pool, inputDir, ct);
     }
 
-    private async Task Process(
-        TaskMessage task,
-        Channel<PythonWorker> pool,
-        string inputDir,
-        CancellationToken ct)
+    private async Task Process(TaskMessage task, Channel<PythonWorker> pool, string inputDir, CancellationToken ct)
     {
         var worker = await pool.Reader.ReadAsync(ct);
-
         try
         {
             foreach (var f in task.Files)
-                Base64FileHelper.WriteBase64ToFile(
-                    Path.Combine(inputDir, f.FileName),
-                    f.Base64Content);
+                Base64FileHelper.WriteBase64ToFile(Path.Combine(inputDir, f.FileName), f.Base64Content);
 
-            var produced = await worker.SendTask(task.SourceFileName);
+            // Запуск с таймаутом 10 минут + поддержка отмены
+            var produced = await worker.SendTaskAsync(task.SourceFileName, ct, TimeSpan.FromMinutes(10));
 
-            var outputDir = task.TaskType == TaskType.Extract
-                ? _cfg.Directories.Transcribe
-                : _cfg.Directories.Results;
-
+            var outputDir = task.TaskType == TaskType.Extract ? _cfg.Directories.Transcribe : _cfg.Directories.Results;
             var payload = produced.Select(f =>
             {
                 var path = Path.Combine(outputDir, $"{worker.ThreadIndex}_{f}");
@@ -211,57 +178,56 @@ public class WorkerService
             foreach (var f in produced)
                 TryDelete(Path.Combine(outputDir, $"{worker.ThreadIndex}_{f}"));
         }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[PROCESS ERROR] Thread {worker.ThreadIndex}: {ex.Message}");
+            // При ошибке всё равно возвращаем воркер в пул
+        }
         finally
         {
             await pool.Writer.WriteAsync(worker, ct);
         }
     }
 
-    private async Task WaitAllWorkersIdleAsync()
+    private async Task WaitAllWorkersIdleAsync(CancellationToken ct)
     {
         foreach (var w in _state.AllWorkers.OfType<PythonWorker>())
-            await w.WaitIdleAsync();
+        {
+            try { await w.WaitIdleAsync(ct); }
+            catch (OperationCanceledException) { /* игнорируем при отмене */ }
+        }
     }
 
     private async Task HeartbeatLoop(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested && _connection.IsAlive)
         {
-            await Task.Delay(
-                TimeSpan.FromSeconds(_cfg.HeartbeatSeconds),
-                ct);
-
-            await _connection.SendAsync(
-                new HeartBeatMessage(),
-                ct);
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(_cfg.HeartbeatSeconds), ct);
+                await _connection.SendAsync(new HeartBeatMessage(), ct);
+            }
+            catch { return; }
         }
     }
 
     private static void TryDelete(string path)
     {
-        try
-        {
-            if (File.Exists(path))
-                File.Delete(path);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[WARN] Failed to delete {path}: {ex.Message}");
-        }
+        try { if (File.Exists(path)) File.Delete(path); } catch { }
     }
 
     private void CleanWorkingDirectories()
     {
-        foreach (var dir in new[]
-        {
-            _cfg.Directories.Extract,
-            _cfg.Directories.Transcribe,
-            _cfg.Directories.Results
-        })
+        foreach (var dir in new[] { _cfg.Directories.Extract, _cfg.Directories.Transcribe, _cfg.Directories.Results })
         {
             Directory.CreateDirectory(dir);
-            foreach (var f in Directory.GetFiles(dir))
-                File.Delete(f);
+            try { foreach (var f in Directory.GetFiles(dir)) File.Delete(f); } catch { }
         }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _globalCts.Cancel();
+        _state.DisposeAll();
     }
 }
