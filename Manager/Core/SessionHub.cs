@@ -15,6 +15,8 @@ public class SessionState
     public int LatestExtractStart { get; set; }
     public int InputDuration { get; set; }
     public int LatestTranscriptionEnd { get; set; }
+    public int? PollingExtract { get; set; }
+    public int? PollingTranscribe { get; set; }
 
     public SessionState(string sessionId, string clientFileName)
     {
@@ -32,6 +34,11 @@ public interface ISessionHub
     void UpdateProgress(string sessionId, int extractStart, int duration, int transcribeEnd);
     void MarkFinalized(string sessionId, string? resultFilePath = null);
     void RemoveSession(string sessionId);
+    void InitializeExtractCounter(string sessionId, int extractCount);
+    void DecrementExtractCounter(string sessionId);
+    void IncrementTranscribeCounter(string sessionId);
+    void DecrementTranscribeCounter(string sessionId);
+    bool CanFinalize(string sessionId);
 }
 
 public class SessionHub : ISessionHub
@@ -76,5 +83,83 @@ public class SessionHub : ISessionHub
     public void RemoveSession(string sessionId)
     {
         _sessions.TryRemove(sessionId, out _);
+    }
+
+    /// <summary>
+    /// Инициализирует только счётчик Extract (первый этап пайплайна).
+    /// Lock не требуется — вызывается однопоточно на старте обработки сессии.
+    /// </summary>
+    public void InitializeExtractCounter(string sessionId, int extractCount)
+    {
+        if (TryGetSession(sessionId, out var session))
+        {
+            session.PollingExtract = extractCount;
+            // PollingTranscribe остаётся null — транскрипции ещё не созданы
+            session.LastActivityUtc = DateTime.UtcNow;
+        }
+    }
+
+    /// <summary>
+    /// Уменьшает счётчик Extract. Вызывается при успешном завершении Extract-задачи.
+    /// </summary>
+    public void DecrementExtractCounter(string sessionId)
+    {
+        if (TryGetSession(sessionId, out var session))
+        {
+            lock (session)
+            {
+                if (session.PollingExtract.HasValue && session.PollingExtract > 0)
+                    session.PollingExtract--;
+            }
+            session.LastActivityUtc = DateTime.UtcNow;
+        }
+    }
+
+    /// <summary>
+    /// Увеличивает счётчик Transcribe. 
+    /// Если счётчик ещё null (первый переход из Extract), инициализирует его значением 1.
+    /// </summary>
+    public void IncrementTranscribeCounter(string sessionId)
+    {
+        if (TryGetSession(sessionId, out var session))
+        {
+            lock (session)
+            {
+                session.PollingTranscribe = session.PollingTranscribe.HasValue
+                    ? session.PollingTranscribe.Value + 1
+                    : 1;
+            }
+            session.LastActivityUtc = DateTime.UtcNow;
+        }
+    }
+
+    /// <summary>
+    /// Уменьшает счётчик Transcribe. Вызывается при успешном завершении Transcribe-задачи.
+    /// </summary>
+    public void DecrementTranscribeCounter(string sessionId)
+    {
+        if (TryGetSession(sessionId, out var session))
+        {
+            lock (session)
+            {
+                if (session.PollingTranscribe.HasValue && session.PollingTranscribe > 0)
+                    session.PollingTranscribe--;
+            }
+            session.LastActivityUtc = DateTime.UtcNow;
+        }
+    }
+
+    /// <summary>
+    /// Возвращает true, когда оба счётчика инициализированы (не null) и равны 0.
+    /// </summary>
+    public bool CanFinalize(string sessionId)
+    {
+        if (!TryGetSession(sessionId, out var session))
+            return false;
+
+        return session.PollingExtract.HasValue &&
+               session.PollingTranscribe.HasValue &&
+               session.PollingExtract == 0 &&
+               session.PollingTranscribe == 0;
     }
 }

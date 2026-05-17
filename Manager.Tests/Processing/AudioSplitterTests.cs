@@ -32,7 +32,7 @@ public class AudioSplitterTests
 
         CreateSilentWav(input, seconds: 5);
 
-        AudioSplitter.Split(input, output, maxSegSec: 2, ratio: 1, sessionId: TestSessionId);
+        var fileCount = AudioSplitter.Split(input, output, maxSegSec: 2, ratio: 1, sessionId: TestSessionId);
 
         var files = Directory.GetFiles(output);
 

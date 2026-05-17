@@ -8,7 +8,7 @@ namespace Manager.Processing;
 
 public static class AudioSplitter
 {
-    public static void Split(
+    public static int Split(
         string inputFile,
         string outputDir,
         double maxSegSec,
@@ -23,8 +23,11 @@ public static class AudioSplitter
 
         logger?.LogInformation($"Начало дробления файла: {inputFile} (Session: {sessionId})");
 
+        int fileCounter = 0;
+
         while (reader.CurrentTime < reader.TotalTime)
         {
+            fileCounter++;
             double remaining =
                 reader.TotalTime.TotalSeconds - reader.CurrentTime.TotalSeconds;
 
@@ -42,6 +45,8 @@ public static class AudioSplitter
 
             pos += cut;
         }
+
+        return fileCounter;
     }
 
     private static bool WriteSegment(

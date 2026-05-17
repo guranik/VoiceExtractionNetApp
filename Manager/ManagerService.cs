@@ -73,13 +73,15 @@ public class ManagerService
 
         try
         {
-            AudioSplitter.Split(
+            var extractFileCount = AudioSplitter.Split(
                 session.InputFilePath,
                 _config.Directories.ExtractSegments,
                 _config.AudioSplitter.MaxExtractSegmentDurationSec,
                 _config.AudioSplitter.ExtractTranscribeEfficiency,
                 session.SessionId,
                 _logger);
+
+            _sessionHub.InitializeExtractCounter(session.SessionId, extractFileCount);
 
             UpdateSessionProgress(session);
 
@@ -96,15 +98,6 @@ public class ManagerService
                     Files = { new FilePayload { FileName = fileName, Base64Content = base64Content } }
                 });
             }
-
-            while (!CanFinalize(session.SessionId) && !ct.IsCancellationRequested)
-            {
-                await Task.Delay(500, ct);
-                UpdateSessionProgress(session);
-            }
-
-            if (!ct.IsCancellationRequested)
-                await FinalizeSessionAsync(session);
         }
         catch (IOException ex)
         {
@@ -229,9 +222,8 @@ public class ManagerService
         if (task.TaskType == TaskType.Extract)
         {
             worker.Info.IncExtract();
-            worker.Info.ActiveExtract.TryRemove(
-                task.SourceFileName,
-                out _);
+            worker.Info.ActiveExtract.TryRemove(task.SourceFileName, out _);
+
             foreach (var f in task.Files)
             {
                 var targetPath = Path.Combine(_config.Directories.TranscribeSegments, f.FileName);
@@ -244,17 +236,17 @@ public class ManagerService
                     SessionId = sessionId,
                     Files = { f }
                 });
+
+                _sessionHub.DecrementExtractCounter(sessionId);
+                _sessionHub.IncrementTranscribeCounter(sessionId);
             }
 
             File.Delete(Path.Combine(_config.Directories.ExtractSegments, task.SourceFileName));
-            UpdateSessionProgress(session);
         }
         else // Transcribe
         {
             worker.Info.IncTranscribe();
-            worker.Info.ActiveTranscribe.TryRemove(
-                task.SourceFileName,
-                out _);
+            worker.Info.ActiveTranscribe.TryRemove(task.SourceFileName, out _);
 
             foreach (var f in task.Files)
             {
@@ -263,32 +255,33 @@ public class ManagerService
                     targetPath = Path.ChangeExtension(targetPath, ".txt");
 
                 File.WriteAllBytes(targetPath, Convert.FromBase64String(f.Base64Content));
+
+                _sessionHub.DecrementTranscribeCounter(sessionId);
             }
 
             var sourceWave = Path.Combine(_config.Directories.TranscribeSegments, task.SourceFileName);
             if (File.Exists(sourceWave)) File.Delete(sourceWave);
+        }
 
-            UpdateSessionProgress(session);
+        UpdateSessionProgress(session);
 
-            if (!session.IsFinalized && CanFinalize(sessionId))
-            {
-                await FinalizeSessionAsync(session);
-            }
+        if (!session.IsFinalized && CanFinalize(sessionId))
+        {
+            await FinalizeSessionAsync(session);
         }
     }
 
     private bool CanFinalize(string sessionId)
     {
-        return
-            !Directory.GetFiles(_config.Directories.ExtractSegments, $"{sessionId}_*").Any() &&
-            !Directory.GetFiles(_config.Directories.TranscribeSegments, $"{sessionId}_*").Any() &&
-            TaskQueues.IsEmpty(sessionId);
+        return _sessionHub.CanFinalize(sessionId);
     }
 
     private async Task FinalizeSessionAsync(SessionState session)
     {
         var semaphore = _sessionLocks.GetOrAdd(session.SessionId, _ => new SemaphoreSlim(1, 1));
         bool acquired = false;
+
+        _logger.LogInformation("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!Finalization!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 
         try
         {
