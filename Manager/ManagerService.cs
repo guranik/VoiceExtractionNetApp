@@ -4,7 +4,6 @@ using System.Linq;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-using Common.Tcp.Messages;
 using Common.Tcp.Networking;
 using Manager.Core;
 using Manager.Networking;
@@ -14,6 +13,7 @@ using Common.Tcp.Models;
 using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using Common.Tcp.Messages;
 
 namespace Manager;
 

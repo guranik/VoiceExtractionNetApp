@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.11.35303.130
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Common", "Common\Common.csproj", "{F9857D99-9254-48B0-9293-3A875964250F}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "CommonTcp", "Common\CommonTcp.csproj", "{F9857D99-9254-48B0-9293-3A875964250F}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Worker", "Worker\Worker.csproj", "{DB9AD510-1307-40E2-94D0-9B16261F54FF}"
 EndProject
@@ -21,7 +21,9 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "PythonProcessors", "PythonP
 		..\..\..\..\..\Projects\VoiceExtraction\speech_transcriptor.py = ..\..\..\..\..\Projects\VoiceExtraction\speech_transcriptor.py
 	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WebClient", "WebClient\WebClient.csproj", "{54812D6A-8E10-4AEA-A6F2-C412EC335856}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WebClient", "WebClient\WebClient.csproj", "{54812D6A-8E10-4AEA-A6F2-C412EC335856}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CommonHttp", "CommonHTTP\CommonHttp.csproj", "{96C76C20-519E-4CBD-ADD5-9E7815AAF889}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -57,6 +59,10 @@ Global
 		{54812D6A-8E10-4AEA-A6F2-C412EC335856}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{54812D6A-8E10-4AEA-A6F2-C412EC335856}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{54812D6A-8E10-4AEA-A6F2-C412EC335856}.Release|Any CPU.Build.0 = Release|Any CPU
+		{96C76C20-519E-4CBD-ADD5-9E7815AAF889}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{96C76C20-519E-4CBD-ADD5-9E7815AAF889}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{96C76C20-519E-4CBD-ADD5-9E7815AAF889}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{96C76C20-519E-4CBD-ADD5-9E7815AAF889}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

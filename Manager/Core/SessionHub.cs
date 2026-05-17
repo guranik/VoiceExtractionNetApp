@@ -29,7 +29,6 @@ public class SessionState
 public interface ISessionHub
 {
     SessionState CreateSession(string clientFileName);
-    SessionState? GetSession(string sessionId);
     bool TryGetSession(string sessionId, out SessionState? session);
     void UpdateProgress(string sessionId, int extractStart, int duration, int transcribeEnd);
     void MarkFinalized(string sessionId, string? resultFilePath = null);
@@ -52,9 +51,6 @@ public class SessionHub : ISessionHub
         _sessions[sessionId] = session;
         return session;
     }
-
-    public SessionState? GetSession(string sessionId)
-        => _sessions.TryGetValue(sessionId, out var s) ? s : null;
 
     public bool TryGetSession(string sessionId, out SessionState? session)
         => _sessions.TryGetValue(sessionId, out session);

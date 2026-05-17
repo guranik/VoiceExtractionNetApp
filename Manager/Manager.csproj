@@ -24,13 +24,14 @@
     <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\Common\Common.csproj" />
-  </ItemGroup>
-
 	<ItemGroup>
 		<FrameworkReference Include="Microsoft.AspNetCore.App" />
 		<PackageReference Include="Microsoft.AspNetCore.Mvc.NewtonsoftJson" Version="8.0.*" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <ProjectReference Include="..\CommonHTTP\CommonHttp.csproj" />
+	  <ProjectReference Include="..\Common\CommonTcp.csproj" />
 	</ItemGroup>
 	
   <ItemGroup>

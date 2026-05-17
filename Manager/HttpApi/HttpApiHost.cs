@@ -1,5 +1,6 @@
 ﻿using System.IO;
 using System.Linq;
+using Common.Http.Dtos;
 using Manager.Core;
 using Manager.Processing;
 using Microsoft.AspNetCore.Builder;
@@ -95,7 +96,7 @@ public class HttpApiHost
                     session.ResultFileName);
             }
 
-            return Results.Json(new
+            return Results.Json(new ProgressResponseDto
             {
                 EarliestExtractSegmentStart = session.LatestExtractStart,
                 InputFileDuration = session.InputDuration,
