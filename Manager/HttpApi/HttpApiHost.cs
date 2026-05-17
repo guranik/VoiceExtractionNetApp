@@ -111,6 +111,4 @@ public class HttpApiHost
         await _app.StartAsync(ct);
         _logger.LogInformation("HTTP API запущен на порту {Port}", _config.Network.HttpPort);
     }
-
-    public async Task StopAsync(CancellationToken ct) => await _app.StopAsync(ct);
 }
