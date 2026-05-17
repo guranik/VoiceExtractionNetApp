@@ -363,3 +363,9 @@ MigrationBackup/
 FodyWeavers.xsd
 /ПроблемаПустыеВыходныеФайлы.txt
 *.txt
+/Manager/extract_segments
+/Manager/transcribe_segments
+/Manager/input/8416bce89cc44d80.wav
+/Manager/input/38e1a379f3044b2e.wav
+/Manager/input/2c95a49b5d9f4b14.wav
+/Manager/input
