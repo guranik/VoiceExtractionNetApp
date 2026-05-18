@@ -63,7 +63,6 @@ public class ManagerService
         await Task.WhenAll(tasks);
     }
 
-
     public async Task ProcessSessionAsync(SessionState session, CancellationToken ct)
     {
         var retryCount = 0;
@@ -133,7 +132,6 @@ public class ManagerService
         _sessionHub.UpdateProgress(session.SessionId, latestExtract, duration, latestTranscriptionEnd);
     }
 
-
     private async Task AcceptLoop(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -145,25 +143,14 @@ public class ManagerService
 
     private async Task WorkerReadLoop(TcpClient client, CancellationToken ct)
     {
-        var reader = new TcpMessageReader(client);
+        var worker = GetWorker(client);
+        if (worker == null) return;
 
         try
         {
             while (!ct.IsCancellationRequested)
             {
-                var readTask = reader.ReadAsync(ct);
-
-                var completed = await Task.WhenAny(
-                    readTask,
-                    Task.Delay(TimeSpan.FromSeconds(30), ct));
-
-                if (completed != readTask)
-                    throw new TimeoutException("Worker read timeout");
-
-                var msg = await readTask;
-
-                if (msg == null)
-                    throw new IOException("Worker disconnected");
+                var msg = await worker.ReadAsync(ct, timeoutMs: 30000);
 
                 _incoming.Enqueue((client, msg));
             }
@@ -172,16 +159,7 @@ public class ManagerService
         {
             _logger.LogWarning($"[WARN] Worker read loop terminated: {ex.Message}");
 
-            var worker = GetWorker(client);
-
-            if (worker != null)
-                worker.Disconnect();
-
-            try
-            {
-                client.Close();
-            }
-            catch { }
+            worker.Disconnect();
         }
     }
 

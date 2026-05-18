@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+﻿using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
 
 namespace Manager.Core;
 
@@ -7,8 +8,8 @@ public class SessionState
     public string SessionId { get; }
     public string ClientFileName { get; set; }
     public string? ResultFileName { get; set; }   
-
     public bool IsFinalized { get; set; }
+    public DateTime? FinalizedAtUtc { get; set; }
     public DateTime LastActivityUtc { get; set; } = DateTime.UtcNow;
     public string? InputFilePath { get; set; }
     public string? ResultFilePath { get; set; }
@@ -44,6 +45,27 @@ public class SessionHub : ISessionHub
 {
     private readonly ConcurrentDictionary<string, SessionState> _sessions = new();
 
+    private readonly TimeSpan _retentionAfterFinalize;
+    private readonly TimeSpan _cleanupInterval;
+    private readonly Timer? _cleanupTimer;
+    private readonly ILogger<SessionHub>? _logger;
+    private readonly ManagerConfig _config;
+
+    public SessionHub(
+        ManagerConfig config,
+        ILogger<SessionHub>? logger = null,
+        TimeSpan? retentionAfterFinalize = null,
+        TimeSpan? cleanupInterval = null)
+    {
+        _logger = logger;
+        _retentionAfterFinalize = retentionAfterFinalize ?? TimeSpan.FromHours(1);
+        _cleanupInterval = cleanupInterval ?? TimeSpan.FromMinutes(5);
+
+        // Запускаем фоновую очистку
+        _cleanupTimer = new Timer(DoCleanup, null, _cleanupInterval, _cleanupInterval);
+        _config = config;
+    }
+
     public SessionState CreateSession(string clientFileName)
     {
         var sessionId = Guid.NewGuid().ToString("N")[..16];
@@ -72,7 +94,93 @@ public class SessionHub : ISessionHub
         {
             session.IsFinalized = true;
             session.ResultFilePath = resultFilePath;
+            session.FinalizedAtUtc = DateTime.UtcNow;
             session.LastActivityUtc = DateTime.UtcNow;
+        }
+    }
+
+    public IEnumerable<string> GetStaleFinalizedSessionIds(DateTime threshold)
+    {
+        var now = DateTime.UtcNow;
+        return _sessions
+            .Where(kv => kv.Value.IsFinalized &&
+                        kv.Value.FinalizedAtUtc.HasValue &&
+                        kv.Value.FinalizedAtUtc.Value < threshold)
+            .Select(kv => kv.Key)
+            .ToList(); // ToList для снятия блокировки на итерацию
+    }
+
+    private void DoCleanup(object? state)
+    {
+        try
+        {
+            var threshold = DateTime.UtcNow - _retentionAfterFinalize;
+            var staleIds = GetStaleFinalizedSessionIds(threshold);
+
+            foreach (var sessionId in staleIds)
+            {
+                // 1. Удаляем файлы сессии
+                CleanSessionFiles(sessionId);
+
+                // 2. Удаляем из хранилища
+                RemoveSession(sessionId);
+
+                _logger?.LogInformation("Очищена финализированная сессия {SessionId}", sessionId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Ошибка при очистке сессий");
+        }
+    }
+
+    private void CleanSessionFiles(string sessionId)
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(_config.Directories.Input))
+            {
+                var inputFiles = Directory.GetFiles(_config.Directories.Input, $"{sessionId}.*");
+                foreach (var file in inputFiles)
+                {
+                    if (Path.GetFileNameWithoutExtension(file).Equals(sessionId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            File.Delete(file);
+                            _logger?.LogDebug("Удалён входной файл: {FilePath}", file);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger?.LogWarning(ex, "Не удалось удалить входной файл: {FilePath}", file);
+                        }
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(_config.Directories.Output))
+            {
+                var outputFiles = Directory.GetFiles(_config.Directories.Output, $"{sessionId}.*");
+                foreach (var file in outputFiles)
+                {
+                    if (Path.GetFileNameWithoutExtension(file).Equals(sessionId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            File.Delete(file);
+                            _logger?.LogDebug("Удалён выходной файл: {FilePath}", file);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger?.LogWarning(ex, "Не удалось удалить выходной файл: {FilePath}", file);
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Ошибка при очистке файлов сессии {SessionId}", sessionId);
         }
     }
 
@@ -157,5 +265,11 @@ public class SessionHub : ISessionHub
                session.PollingTranscribe.HasValue &&
                session.PollingExtract == 0 &&
                session.PollingTranscribe == 0;
+    }
+
+    public void Dispose()
+    {
+        _cleanupTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+        _cleanupTimer?.Dispose();
     }
 }

@@ -62,7 +62,7 @@ public class WorkerSession
 
     public async Task<MessageBase> ReadAsync(
         CancellationToken ct,
-        int timeoutMs = 30000)
+        int timeoutMs = 60000)
     {
         if (IsDead)
             throw new IOException("Worker is dead");

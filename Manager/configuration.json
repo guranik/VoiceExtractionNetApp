@@ -1,8 +1,11 @@
 {
   "Network": {
     "ManagerPort": 5001,
-    "HttpPort": 5000,
-    "FinalizeIdleTimeoutSeconds": 10
+    "HttpPort": 5000
+  },
+
+  "Session": {
+    "FinalizeIdleTimeoutSeconds": 100
   },
 
   "Directories": {

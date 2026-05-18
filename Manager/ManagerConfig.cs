@@ -7,6 +7,7 @@ namespace Manager;
 public class ManagerConfig
 {
     public NetworkConfig Network { get; set; }
+    public SessionConfig Session { get; set; }
     public DirectoryConfig Directories { get; set; }
     public AudioSplitterConfig AudioSplitter { get; set; }
     public HeartbeatConfig Heartbeat { get; set; }
@@ -67,6 +68,10 @@ public class NetworkConfig
 {
     public int ManagerPort { get; set; }
     public int HttpPort { get; set; }
+}
+
+public class SessionConfig
+{
     public int FinalizeIdleTimeoutSeconds { get; set; }
 }
 

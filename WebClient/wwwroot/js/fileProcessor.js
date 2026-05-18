@@ -10,6 +10,9 @@
     let currentSessionId = null;
     let originalFileName = null;
 
+    const SESSION_STORAGE_KEY = 'audioProcessingSession';
+    const SESSION_MAX_AGE_MS = 60 * 1000;
+
     form.addEventListener('submit', async function (e) {
         e.preventDefault();
 
@@ -57,6 +60,11 @@
             currentSessionId = data.sessionId;
 
             showAlert('✅ Обработка запущена. Ожидание прогресса...', 'info');
+            saveSessionToStorage({
+                sessionId: data.sessionId,
+                originalFileName: originalFileName,
+                startTime: Date.now()
+            });
             startPolling(currentSessionId);
 
         } catch (error) {
@@ -148,6 +156,8 @@
             showAlert(`✅ Обработка завершена! Файл <strong>${fileName}</strong> готов.`, 'success');
             setProcessingState(false);
             setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 1800000);
+
+            clearSessionStorage();
         } catch (error) {
             console.error('Ошибка скачивания:', error);
             showAlert('⚠️ Файл обработан, но не удалось подготовить скачивание.', 'warning');
@@ -239,6 +249,39 @@
         downloadSection?.classList.add('d-none');
     }
 
+    function saveSessionToStorage(sessionData) {
+        try {
+            localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionData));
+        } catch (e) {
+            console.warn('Не удалось сохранить сессию в localStorage:', e);
+        }
+    }
+
+    function loadSessionFromStorage() {
+        try {
+            const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+            if (!raw) return null;
+
+            const session = JSON.parse(raw);
+            const age = Date.now() - session.startTime;
+
+            if (age > SESSION_MAX_AGE_MS) {
+                clearSessionStorage();
+                return null;
+            }
+            return session;
+        } catch {
+            clearSessionStorage();
+            return null;
+        }
+    }
+
+    function clearSessionStorage() {
+        try {
+            localStorage.removeItem(SESSION_STORAGE_KEY);
+        } catch { }
+    }
+
     async function safeParseJson(response) {
         try {
             const text = await response.text();
@@ -247,6 +290,43 @@
             return null;
         }
     }
+
+    (async function resumeSessionIfAny() {
+        const saved = loadSessionFromStorage();
+        if (!saved?.sessionId) return;
+
+        // Проверяем, не завершена ли сессия уже
+        try {
+            const response = await fetch(`?handler=Progress&sessionId=${encodeURIComponent(saved.sessionId)}`, {
+                method: 'GET',
+                cache: 'no-store'
+            });
+
+            const contentType = response.headers.get('content-type')?.toLowerCase() || '';
+            const isBinary = contentType.includes('application/octet-stream') ||
+                response.headers.get('content-disposition')?.includes('filename');
+
+            if (isBinary) {
+                // Файл готов — сразу показываем скачивание
+                originalFileName = saved.originalFileName;
+                await handleFileDownload(response);
+                clearSessionStorage();
+                showAlert(`✅ Обработка завершена пока вы были в офлайне. Файл <strong>${saved.originalFileName}</strong> готов.`, 'success');
+                return;
+            }
+
+            // Сессия активна — возобновляем поллинг
+            currentSessionId = saved.sessionId;
+            originalFileName = saved.originalFileName;
+            setProcessingState(true);
+            showAlert('🔄 Обнаружена активная сессия. Восстановление прогресса...', 'info');
+            startPolling(currentSessionId);
+
+        } catch (err) {
+            console.warn('Не удалось восстановить сессию:', err);
+            clearSessionStorage();
+        }
+    })();
 
     window.addEventListener('beforeunload', () => {
         stopPolling();

@@ -25,8 +25,18 @@ class Program
                 .ConfigureServices((ctx, services) =>
                 {
                     services.AddSingleton(config);
-                    services.AddSingleton<ISessionHub, SessionHub>();
-                    services.AddSingleton<ManagerService>();
+                    services.AddSingleton<ISessionHub>(sp =>
+                    {
+                        var config = sp.GetRequiredService<ManagerConfig>();
+                        var logger = sp.GetRequiredService<ILogger<SessionHub>>();
+
+                        return new SessionHub(
+                            config,
+                            logger: logger,
+                            retentionAfterFinalize: TimeSpan.FromSeconds(config.Session.FinalizeIdleTimeoutSeconds),
+                            cleanupInterval: TimeSpan.FromMinutes(5)
+                        );
+                    }); services.AddSingleton<ManagerService>();
                     services.AddSingleton<HttpApiHost>();
                 })
                 .ConfigureLogging(logging =>
@@ -36,7 +46,6 @@ class Program
                 })
                 .Build();
 
-            var sessionHub = host.Services.GetRequiredService<ISessionHub>();
             var httpApi = host.Services.GetRequiredService<HttpApiHost>();
             var managerService = host.Services.GetRequiredService<ManagerService>();
 
@@ -44,7 +53,6 @@ class Program
             {
                 managerService.RunAsync(cts.Token),
                 httpApi.StartAsync(cts.Token),
-                RunSessionCleanupAsync(sessionHub, cts.Token)
             };
 
             await Task.WhenAll(tasks);
@@ -52,15 +60,6 @@ class Program
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[FATAL] {ex}");
-        }
-    }
-
-    private static async Task RunSessionCleanupAsync(ISessionHub sessionHub, CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
-        {
-            await Task.Delay(TimeSpan.FromMinutes(5), ct);
-            // Опционально: удалять старые сессии
         }
     }
 }

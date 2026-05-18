@@ -8,7 +8,4 @@ public enum MessageType
 
     ExtractTask,
     TranscribeTask,
-
-    ClientFile,
-    ClientProgress
 }
