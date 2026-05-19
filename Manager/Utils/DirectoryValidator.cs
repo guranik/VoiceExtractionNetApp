@@ -1,6 +1,4 @@
-﻿using System.IO;
-
-namespace Manager.Utils;
+﻿namespace Manager.Utils;
 public static class DirectoryValidator
 {
     public static void ValidateManagerEnvironment(ManagerConfig config)

@@ -1,5 +1,4 @@
 ﻿using System.Net.Sockets;
-using System.Text;
 using Common.Tcp.Messages;
 using Common.Tcp.Serialization;
 

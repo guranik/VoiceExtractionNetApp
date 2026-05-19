@@ -1,6 +1,4 @@
-﻿using System.IO;
-using System.Linq;
-using Common.Http.Dtos;
+﻿using Common.Http.Dtos;
 using Manager.Core;
 using Manager.Processing;
 using Microsoft.AspNetCore.Builder;

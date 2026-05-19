@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Http.Features;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.NetworkInformation;
 using WebClient.Services;
 
 var builder = WebApplication.CreateBuilder(args);

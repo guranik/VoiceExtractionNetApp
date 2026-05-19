@@ -1,10 +1,4 @@
-﻿using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Net.Sockets;
-using System.Threading;
-using System.Threading.Tasks;
-using Common.Tcp.Networking;
+﻿using System.Net.Sockets;
 using Manager.Core;
 using Manager.Networking;
 using Manager.Scheduling;
@@ -143,8 +137,7 @@ public class ManagerService
 
     private async Task WorkerReadLoop(TcpClient client, CancellationToken ct)
     {
-        var worker = GetWorker(client);
-        if (worker == null) return;
+        var worker = new WorkerSession(client, new WorkerInfo(client, 0, 0));
 
         try
         {
