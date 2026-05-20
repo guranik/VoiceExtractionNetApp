@@ -17,6 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Remove="Manager.txt" />
     <None Remove="ManagerListing.txt" />
   </ItemGroup>
 
@@ -33,9 +34,5 @@
 	  <ProjectReference Include="..\CommonHTTP\CommonHttp.csproj" />
 	  <ProjectReference Include="..\Common\CommonTcp.csproj" />
 	</ItemGroup>
-	
-  <ItemGroup>
-    <Service Include="{508349b6-6b84-4df5-91f0-309beebad82d}" />
-  </ItemGroup>
 
 </Project>

@@ -16,6 +16,7 @@ class Program
         try
         {
             var config = ManagerConfig.Load("configuration.json");
+
             DirectoryValidator.ValidateManagerEnvironment(config);
 
             using var cts = new CancellationTokenSource();
@@ -37,7 +38,15 @@ class Program
                             cleanupInterval: TimeSpan.FromMinutes(5)
                         );
                     }); services.AddSingleton<ManagerService>();
-                    services.AddSingleton<HttpApiHost>();
+                    services.AddSingleton<HttpApiHost>(sp =>
+                    {
+                        return new HttpApiHost(
+                            sp.GetRequiredService<ISessionHub>(),
+                            sp.GetRequiredService<ManagerService>(),
+                            sp.GetRequiredService<ManagerConfig>(),
+                            sp.GetRequiredService<ILogger<HttpApiHost>>()
+                        );
+                    });
                 })
                 .ConfigureLogging(logging =>
                 {

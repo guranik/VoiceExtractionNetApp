@@ -1,0 +1,13 @@
+﻿{
+  "Network": {
+    "ManagerPort": 0,
+    "HttpPort": 0
+  },
+  "Directories": {
+    "Input": "test_in",
+    "ExtractSegments": "test_ex",
+    "TranscribeSegments": "test_tr",
+    "Transcriptions": "test_out"
+  },
+  "Session": { "FinalizeIdleTimeoutSeconds": 3600 }
+}

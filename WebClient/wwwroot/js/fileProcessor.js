@@ -10,6 +10,11 @@
     let currentSessionId = null;
     let originalFileName = null;
 
+    // === Переменные для таймера обработки ===
+    let processingStartTime = null;
+    let isTimerRunning = false;
+    // ========================================
+
     const SESSION_STORAGE_KEY = 'audioProcessingSession';
     const SESSION_MAX_AGE_MS = 60 * 1000;
 
@@ -27,6 +32,10 @@
         originalFileName = file.name;
         setProcessingState(true);
         hideDownloadSection();
+
+        // Сброс состояния таймера при новом запуске
+        processingStartTime = null;
+        isTimerRunning = false;
 
         showAlert('🔧 Подготовка аудио (конвертация в WAV)...', 'info');
 
@@ -74,33 +83,24 @@
         }
     });
 
-
     function startPolling(sessionId) {
         if (pollingInterval) clearInterval(pollingInterval);
         pollingInterval = setInterval(async () => {
 
-            if (pollingInProgress)
-                return;
-
+            if (pollingInProgress) return;
             pollingInProgress = true;
 
             try {
                 const controller = new AbortController();
-
-                const timeoutId = setTimeout(() => {
-                    controller.abort();
-                }, 10000);
+                const timeoutId = setTimeout(() => controller.abort(), 10000);
 
                 const response = await fetch(
                     `?handler=Progress&sessionId=${encodeURIComponent(sessionId)}`,
-                    {
-                        signal: controller.signal
-                    });
+                    { signal: controller.signal }
+                );
 
                 clearTimeout(timeoutId);
-
-                if (!response.ok)
-                    return;
+                if (!response.ok) return;
 
                 const contentType = response.headers.get('content-type')?.toLowerCase() || '';
                 const contentDisposition = response.headers.get('content-disposition') || '';
@@ -114,23 +114,43 @@
                 if (isBinary) {
                     await handleFileDownload(response);
                     stopPolling();
+                    stopProcessingTimer(); // Остановка таймера при прямом получении файла
                     return;
                 }
 
                 const result = await response.json();
-
-                if (result.type === 'progress' && result.data)
+                if (result.type === 'progress' && result.data) {
                     updateProgressBars(result.data);
-            }
-            catch (error) {
+                }
+            } catch (error) {
                 console.warn('Polling reconnect...', error);
-            }
-            finally {
+            } finally {
                 pollingInProgress = false;
             }
-
         }, 3000);
     }
+
+    // === Функции управления таймером ===
+    function startProcessingTimer() {
+        if (!isTimerRunning) {
+            processingStartTime = Date.now();
+            isTimerRunning = true;
+        }
+    }
+
+    function stopProcessingTimer() {
+        if (isTimerRunning && processingStartTime !== null) {
+            const elapsedMs = Date.now() - processingStartTime;
+            const elapsedSec = (elapsedMs / 1000).toFixed(2);
+            // Формат вывода: <имя_без_расширения>.txt: <время> сек
+            const outputName = (originalFileName?.replace(/\.[^/.]+$/, '') || 'result') + '.txt';
+            console.log(`${outputName}: ${elapsedSec} сек`);
+
+            isTimerRunning = false;
+            processingStartTime = null;
+        }
+    }
+    // =====================================
 
     async function handleFileDownload(response) {
         try {
@@ -150,6 +170,7 @@
                 triggerAutoDownload(downloadUrl, fileName);
             }
 
+            // Обновляем прогресс-бары до 100% при завершении
             updateProgressBar('extractProgress', 'extractStatus', 100);
             updateProgressBar('transcribeProgress', 'transcribeStatus', 100);
 
@@ -185,15 +206,29 @@
 
     function updateProgressBars(data) {
         const { earliestExtractSegmentStart, inputFileDuration, latestTranscriptionEnd } = data;
+
+        // Запускаем таймер при первом получении данных прогресса
+        if (!isTimerRunning && (earliestExtractSegmentStart !== undefined || latestTranscriptionEnd !== undefined)) {
+            startProcessingTimer();
+        }
+
+        let extractPercent = 0;
+        let transcribePercent = 0;
+
         if (inputFileDuration > 0 && earliestExtractSegmentStart !== undefined) {
-            const percent = Math.min(100, Math.max(0,
+            extractPercent = Math.min(100, Math.max(0,
                 Math.round((earliestExtractSegmentStart / inputFileDuration) * 100)));
-            updateProgressBar('extractProgress', 'extractStatus', percent);
+            updateProgressBar('extractProgress', 'extractStatus', extractPercent);
         }
         if (inputFileDuration > 0 && latestTranscriptionEnd !== undefined) {
-            const percent = Math.min(100, Math.max(0,
+            transcribePercent = Math.min(100, Math.max(0,
                 Math.round((latestTranscriptionEnd / inputFileDuration) * 100)));
-            updateProgressBar('transcribeProgress', 'transcribeStatus', percent);
+            updateProgressBar('transcribeProgress', 'transcribeStatus', transcribePercent);
+        }
+
+        // Останавливаем таймер, когда оба этапа достигли 100%
+        if (isTimerRunning && extractPercent >= 100 && transcribePercent >= 100) {
+            stopProcessingTimer();
         }
     }
 
@@ -295,7 +330,6 @@
         const saved = loadSessionFromStorage();
         if (!saved?.sessionId) return;
 
-        // Проверяем, не завершена ли сессия уже
         try {
             const response = await fetch(`?handler=Progress&sessionId=${encodeURIComponent(saved.sessionId)}`, {
                 method: 'GET',
@@ -307,15 +341,14 @@
                 response.headers.get('content-disposition')?.includes('filename');
 
             if (isBinary) {
-                // Файл готов — сразу показываем скачивание
                 originalFileName = saved.originalFileName;
                 await handleFileDownload(response);
                 clearSessionStorage();
+                // Таймер уже остановлен внутри handleFileDownload
                 showAlert(`✅ Обработка завершена пока вы были в офлайне. Файл <strong>${saved.originalFileName}</strong> готов.`, 'success');
                 return;
             }
 
-            // Сессия активна — возобновляем поллинг
             currentSessionId = saved.sessionId;
             originalFileName = saved.originalFileName;
             setProcessingState(true);
@@ -333,7 +366,6 @@
         document.querySelectorAll('a[href^="blob:"]').forEach(a => window.URL.revokeObjectURL(a.href));
     });
 });
-
 
 async function convertToWav(file) {
     if (file.name.toLowerCase().endsWith('.wav')) {

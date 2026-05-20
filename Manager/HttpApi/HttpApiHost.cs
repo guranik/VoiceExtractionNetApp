@@ -12,7 +12,7 @@ namespace Manager.HttpApi;
 
 public class HttpApiHost
 {
-    private readonly WebApplication _app;
+    public  WebApplication App;
     private readonly ISessionHub _sessionHub;
     private readonly ManagerService _managerService;
     private readonly ManagerConfig _config;
@@ -29,6 +29,12 @@ public class HttpApiHost
         _config = config;
         _logger = logger;
 
+        App = CreateApp();
+        RegisterEndpoints();
+    }
+
+    protected virtual WebApplication CreateApp()
+    {
         var builder = WebApplication.CreateBuilder();
         builder.Services.Configure<FormOptions>(options =>
         {
@@ -36,18 +42,16 @@ public class HttpApiHost
         });
         builder.WebHost.ConfigureKestrel(opts =>
         {
-            opts.ListenAnyIP(config.Network.HttpPort);
+            opts.ListenAnyIP(_config.Network.HttpPort);
             opts.Limits.MaxRequestBodySize = 1024 * 1024 * 1024;
         });
-        _app = builder.Build();
-
-        RegisterEndpoints();
+        return builder.Build();
     }
 
     private void RegisterEndpoints()
     {
         // POST /upload
-        _app.MapPost("/upload", async (HttpRequest request, CancellationToken ct) =>
+        App.MapPost("/upload", async (HttpRequest request, CancellationToken ct) =>
         {
             if (!request.HasFormContentType)
                 return Results.BadRequest(new { error = "Expected multipart/form-data" });
@@ -79,7 +83,7 @@ public class HttpApiHost
         }).DisableAntiforgery();
 
         // GET /progress/{sessionId}
-        _app.MapGet("/progress/{sessionId}", (string sessionId) =>
+        App.MapGet("/progress/{sessionId}", (string sessionId) =>
         {
             if (!_sessionHub.TryGetSession(sessionId, out var session))
                 return Results.NotFound(new { error = "Сессия не найдена" });
@@ -102,12 +106,12 @@ public class HttpApiHost
             });
         });
 
-        _app.MapGet("/health", () => Results.Ok(new { status = "ok", timestamp = DateTime.UtcNow }));
+        App.MapGet("/health", () => Results.Ok(new { status = "ok", timestamp = DateTime.UtcNow }));
     }
 
     public async Task StartAsync(CancellationToken ct)
     {
-        await _app.StartAsync(ct);
+        await App.StartAsync(ct);
         _logger.LogInformation("HTTP API запущен на порту {Port}", _config.Network.HttpPort);
     }
 }
