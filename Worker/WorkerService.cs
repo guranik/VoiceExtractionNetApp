@@ -3,6 +3,7 @@ using Common.Tcp.Models;
 using Worker.Network;
 using Common.Tcp.Messages;
 using Common.Tcp.Utils;
+using Common.Utils;
 
 namespace Worker;
 
@@ -89,6 +90,11 @@ public class WorkerService : IAsyncDisposable
 
     private async Task ConnectAndHandshakeAsync(CancellationToken ct)
     {
+        var attempt = 0;
+        const int maxAttempts = int.MaxValue;
+        var baseDelay = TimeSpan.FromSeconds(2);
+        var maxDelay = TimeSpan.FromSeconds(30);
+
         while (!ct.IsCancellationRequested)
         {
             try
@@ -113,9 +119,14 @@ public class WorkerService : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ERROR] Connection attempt: {ex.GetType().Name} - {ex.Message}");
+                Console.WriteLine($"[ERROR] Connection attempt {attempt + 1}: {ex.GetType().Name} - {ex.Message}");
                 _connection?.Dispose();
-                await Task.Delay(2000, ct);
+
+                if (attempt >= maxAttempts - 1)
+                    throw;
+
+                await ExponentialBackoff.WaitAsync(attempt, baseDelay, maxDelay, ct);
+                attempt++;
             }
         }
     }

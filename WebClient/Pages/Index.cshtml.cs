@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using System.Text.Json;
 using WebClient.Services;
+using Common.Utils;
 
 namespace WebClient.Pages;
 
@@ -32,7 +33,9 @@ public class IndexModel : PageModel
         if (file.Length > 1024L * 1024 * 1024)
             return BadRequest(new { error = "Файл слишком большой" });
 
-        var retryDelay = TimeSpan.FromSeconds(3);
+        var attempt = 0;
+        var baseDelay = TimeSpan.FromSeconds(2);
+        var maxDelay = TimeSpan.FromSeconds(30);
 
         while (true)
         {
@@ -54,7 +57,7 @@ public class IndexModel : PageModel
                 content.Add(streamContent, "file", file.FileName);
                 content.Add(new StringContent(file.FileName), "clientFileName");
 
-                _logger.LogInformation("Попытка отправки файла в Manager...");
+                _logger.LogInformation("Попытка отправки файла в Manager (attempt {Attempt})...", attempt + 1);
 
                 var response = await client.PostAsync(
                     "/upload",
@@ -110,14 +113,15 @@ public class IndexModel : PageModel
                 _logger.LogError(ex, "Неожиданная ошибка upload");
             }
 
-            _logger.LogWarning("Ожидание переподключения к Manager...");
+            _logger.LogWarning("Ожидание переподключения к Manager (attempt {Attempt})...", attempt + 1);
 
             while (!_networkState.IsNetworkAvailable)
             {
                 await Task.Delay(1000);
             }
 
-            await Task.Delay(retryDelay);
+            await ExponentialBackoff.WaitAsync(attempt, baseDelay, maxDelay, HttpContext.RequestAborted);
+            attempt++;
         }
     }
 
@@ -127,7 +131,9 @@ public class IndexModel : PageModel
         if (string.IsNullOrWhiteSpace(sessionId))
             return BadRequest(new { error = "SessionId не указан" });
 
-        var retryDelay = TimeSpan.FromSeconds(2);
+        var attempt = 0;
+        var baseDelay = TimeSpan.FromSeconds(2);
+        var maxDelay = TimeSpan.FromSeconds(30);
 
         while (true)
         {
@@ -185,7 +191,8 @@ public class IndexModel : PageModel
                 await Task.Delay(1000);
             }
 
-            await Task.Delay(retryDelay);
+            await ExponentialBackoff.WaitAsync(attempt, baseDelay, maxDelay, HttpContext.RequestAborted);
+            attempt++;
         }
     }
 

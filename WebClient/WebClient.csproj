@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CommonHTTP\CommonHttp.csproj" />
+    <ProjectReference Include="..\Common\CommonTcp.csproj" />
   </ItemGroup>
 
 </Project>
