@@ -56,7 +56,7 @@ public sealed class WorkerConfiguration
         var config = JsonSerializer.Deserialize<WorkerConfiguration>(json,
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
 
-        config.PythonScripts.BaseDirectory = Path.GetDirectoryName(Path.GetFullPath(path));
+        config.PythonScripts.ScriptSourceDirectory = Path.GetDirectoryName(Path.GetFullPath(path));
 
         return config;
     }
@@ -77,26 +77,28 @@ public sealed class DirectoryConfig
 
 public sealed class PythonScriptConfig
 {
-    public string? BaseDirectory { get; set; }
+    public string? ScriptSourceDirectory { get; set; }
 
     private string _extractor = "";
     private string _transcriptor = "";
-
+   
     public string Extractor
     {
-        get => string.IsNullOrEmpty(BaseDirectory)
+        get => string.IsNullOrEmpty(ScriptSourceDirectory)
             ? _extractor
-            : Path.GetFullPath(Path.Combine(BaseDirectory, _extractor));
+            : Path.GetFullPath(Path.Combine(ScriptSourceDirectory, _extractor));
         set => _extractor = value;
     }
 
     public string Transcriptor
     {
-        get => string.IsNullOrEmpty(BaseDirectory)
+        get => string.IsNullOrEmpty(ScriptSourceDirectory)
             ? _transcriptor
-            : Path.GetFullPath(Path.Combine(BaseDirectory, _transcriptor));
+            : Path.GetFullPath(Path.Combine(ScriptSourceDirectory, _transcriptor));
         set => _transcriptor = value;
     }
+
+    public string WhisperModel { get; set; }
 }
 
 public sealed class WorkerCountConfig

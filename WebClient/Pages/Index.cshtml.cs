@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using System.Text.Json;
 using WebClient.Services;
-using Common.Utils;
+using Common.Http.Utils;
 
 namespace WebClient.Pages;
 

@@ -1,4 +1,4 @@
-namespace Common.Tcp.Utils;
+namespace Common.Http.Utils;
 
 public static class ExponentialBackoff
 {
