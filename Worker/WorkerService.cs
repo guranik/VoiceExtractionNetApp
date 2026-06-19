@@ -3,6 +3,7 @@ using Common.Tcp.Models;
 using Worker.Network;
 using Common.Tcp.Messages;
 using Common.Tcp.Utils;
+using Worker.PythonProcessors;
 
 namespace Worker;
 
@@ -63,12 +64,12 @@ public class WorkerService : IAsyncDisposable
 
     private async Task InitializeWorkersAsync(CancellationToken ct)
     {
-        var extractPool = Channel.CreateBounded<PythonWorker>(_cfg.Workers.ExtractCount);
-        var transcribePool = Channel.CreateBounded<PythonWorker>(_cfg.Workers.TranscribeCount);
+        var extractPool = Channel.CreateBounded<BasePythonProcessor>(_cfg.Workers.ExtractCount);
+        var transcribePool = Channel.CreateBounded<BasePythonProcessor>(_cfg.Workers.TranscribeCount);
 
         for (int i = 0; i < _cfg.Workers.ExtractCount; i++)
         {
-            var w = new PythonWorker(_cfg.PythonScripts.Extractor, _cfg.Directories.Extract, _cfg.Directories.Transcribe, i);
+            var w = new ExtractProcessor(_cfg.PythonScripts.Extractor, _cfg.Directories.Extract, _cfg.Directories.Transcribe, i, _cfg.PythonScripts.MaxSegmentDuration);
             _state.AllWorkers.Add(w);
             await w.Ready;
             await extractPool.Writer.WriteAsync(w, ct);
@@ -76,7 +77,7 @@ public class WorkerService : IAsyncDisposable
 
         for (int i = 0; i < _cfg.Workers.TranscribeCount; i++)
         {
-            var w = new PythonWorker(_cfg.PythonScripts.Transcriptor, _cfg.Directories.Transcribe, _cfg.Directories.Results, i);
+            var w = new TranscribeProcessor(_cfg.PythonScripts.Transcriptor, _cfg.Directories.Transcribe, _cfg.Directories.Results, i, _cfg.PythonScripts.WhisperModel);
             _state.AllWorkers.Add(w);
             await w.Ready;
             await transcribePool.Writer.WriteAsync(w, ct);
@@ -150,7 +151,7 @@ public class WorkerService : IAsyncDisposable
         await Process(task, pool, inputDir, ct);
     }
 
-    private async Task Process(TaskMessage task, Channel<PythonWorker> pool, string inputDir, CancellationToken ct)
+    private async Task Process(TaskMessage task, Channel<BasePythonProcessor> pool, string inputDir, CancellationToken ct)
     {
         var worker = await pool.Reader.ReadAsync(ct);
         try
@@ -196,7 +197,7 @@ public class WorkerService : IAsyncDisposable
 
     private async Task WaitAllWorkersIdleAsync(CancellationToken ct)
     {
-        foreach (var w in _state.AllWorkers.OfType<PythonWorker>())
+        foreach (var w in _state.AllWorkers.OfType<BasePythonProcessor>())
         {
             try { await w.WaitIdleAsync(ct); }
             catch (OperationCanceledException) { /* игнорируем при отмене */ }

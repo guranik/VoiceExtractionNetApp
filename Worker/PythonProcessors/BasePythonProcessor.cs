@@ -3,40 +3,32 @@ using System.Text;
 using System.Threading.Channels;
 using Worker.Interfaces;
 
-namespace Worker;
-
-public class PythonWorker : IWorker, IAsyncDisposable
+namespace Worker.PythonProcessors;
+public abstract class BasePythonProcessor : IWorker, IAsyncDisposable
 {
     public int ThreadIndex { get; }
-    private readonly string _outputDir;
+    protected readonly string _outputDir;
     private readonly Process _process;
     private TaskCompletionSource<List<string>>? _currentTask;
     private CancellationTokenSource? _taskCts;
     private readonly TaskCompletionSource<bool> _readyTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task Ready => _readyTcs.Task;
 
-    // Неблокирующий логгер: очередь + фоновый потребитель
     private readonly Channel<string> _logQueue = Channel.CreateBounded<string>(new BoundedChannelOptions(2000) { FullMode = BoundedChannelFullMode.DropOldest });
     private readonly Task _logConsumerTask;
 
-    private static readonly string AppDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
+    protected static readonly string AppDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
 
-    public PythonWorker(string script, string inputDir, string outputDir, int index)
+    protected BasePythonProcessor(string script, string inputDir, string outputDir, int index, string specificArgs)
     {
         ThreadIndex = index;
         _outputDir = outputDir;
 
-        var pythonExe = Path.Combine(AppDir, "python", "python.exe");
-        var pythonLib = Path.Combine(AppDir, "python", "Lib");
-        var sitePackages = Path.Combine(AppDir, "python", "Lib", "site-packages");
-        var torchLib = Path.Combine(sitePackages, "torch", "lib");
-        var torchaudioLib = Path.Combine(sitePackages, "torchaudio", "lib");
-        var ffmpegBin = Path.Combine(AppDir, "ffmpeg", "bin");
-
         var startInfo = new ProcessStartInfo
         {
-            // 1. Use bundled Python, NOT system "python"
+            // 1. Use bundled Python
             FileName = Path.Combine(AppDir, "python", "python.exe"),
+            // Base arguments: script, inputDir, outputDir, index
             Arguments = $"\"{script}\" \"{inputDir}\" \"{outputDir}\" {index}",
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -45,38 +37,41 @@ public class PythonWorker : IWorker, IAsyncDisposable
             CreateNoWindow = true,
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
-            WorkingDirectory = AppDir // Ensures relative imports in script work
+            WorkingDirectory = AppDir
         };
 
-        // === Environment Variables for Offline Operation ===
-        var env = startInfo.EnvironmentVariables;
+        // Даем наследникам добавить свои переменные окружения
+        ConfigureEnvironment(startInfo);
 
-        // 1. Python runtime isolation (critical for embeddable Python)
-        env["PYTHONHOME"] = Path.Combine(AppDir, "python");
-        env["PYTHONPATH"] = $"{sitePackages};{pythonLib}";
-
-        // 2. I/O protocol reliability
-        env["PYTHONUNBUFFERED"] = "1";       
-        env["PYTHONIOENCODING"] = "utf-8";  
-        env["PYTHONDONTWRITEBYTECODE"] = "1"; 
-
-        env["PATH"] = $"{torchLib};{torchaudioLib};{ffmpegBin};{env["PATH"]}";
-
-        string cacheDir = Path.Combine(AppDir, "cache");
-        env["TORCH_HOME"] = Path.Combine(cacheDir, "torch");
-        env["TORCH_HUB_DIR"] = Path.Combine(cacheDir, "torch_hub");
-        env["XDG_CACHE_HOME"] = cacheDir;          
-        env["HF_HOME"] = Path.Combine(cacheDir, "huggingface"); 
+        // Даем наследникам добавить свои аргументы командной строки
+        if (!string.IsNullOrWhiteSpace(specificArgs))
+        {
+            startInfo.Arguments += " " + specificArgs;
+        }
 
         _process = new Process { StartInfo = startInfo };
         _process.OutputDataReceived += (_, e) => OnLine(e.Data, false);
         _process.ErrorDataReceived += (_, e) => OnLine(e.Data, true);
+
+        // Важно: подписываемся на событие выхода процесса
+        _process.EnableRaisingEvents = true;
+        _process.Exited += (_, _) => HandleProcessExit();
+
         _logConsumerTask = ConsumeLogsAsync();
 
         _process.Start();
         _process.BeginOutputReadLine();
         _process.BeginErrorReadLine();
     }
+
+    /// <summary>
+    /// Метод для добавления специфичных переменных окружения (например, PyTorch, CUDA, Cache).
+    /// </summary>
+    protected abstract void ConfigureEnvironment(ProcessStartInfo startInfo);
+
+    /// <summary>
+    /// Метод для получения специфичных аргументов командной строки.
+    /// </summary>
 
     public async Task<List<string>> SendTaskAsync(string fileName, CancellationToken ct, TimeSpan? timeout = null)
     {
@@ -86,9 +81,8 @@ public class PythonWorker : IWorker, IAsyncDisposable
         linkedCts.CancelAfter(timeout ?? TimeSpan.FromMinutes(10));
         _taskCts = linkedCts;
 
-        _currentTask = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _currentTask = new TaskCompletionSource<List<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        // Асинхронная запись в stdin + таймаут
         await _process.StandardInput.WriteAsync((fileName + "\n").AsMemory(), linkedCts.Token);
         await _process.StandardInput.FlushAsync(linkedCts.Token);
 
@@ -114,7 +108,6 @@ public class PythonWorker : IWorker, IAsyncDisposable
         if (string.IsNullOrWhiteSpace(line)) return;
         line = line.Trim();
 
-        // Неблокирующая отправка в очередь логов
         _logQueue.Writer.TryWrite(isError ? $"[PY-{ThreadIndex}] [ERR] {line}" : $"[PY-{ThreadIndex}] {line}");
 
         if (line == "READY")
@@ -131,6 +124,8 @@ public class PythonWorker : IWorker, IAsyncDisposable
 
     private void HandleProcessExit()
     {
+        if (!_process.HasExited) return;
+
         var code = _process.ExitCode;
         _logQueue.Writer.TryWrite($"[PY-{ThreadIndex}] Process exited with code {code}");
         if (_currentTask != null && !_currentTask.Task.IsCompleted)
@@ -139,7 +134,10 @@ public class PythonWorker : IWorker, IAsyncDisposable
         }
     }
 
-    private void CompleteTask()
+    /// <summary>
+    /// Сделан virtual, чтобы наследники могли переопределить логику сбора файлов, если она будет отличаться.
+    /// </summary>
+    protected virtual void CompleteTask()
     {
         var tcs = _currentTask;
         if (tcs == null || tcs.Task.IsCompleted) return;
@@ -173,7 +171,7 @@ public class PythonWorker : IWorker, IAsyncDisposable
         }
     }
 
-    public void Dispose() => ((IAsyncDisposable)this).DisposeAsync().GetAwaiter().GetResult();
+    public void Dispose() => ((IAsyncDisposable)this).DisposeAsync().AsTask().GetAwaiter().GetResult();
 
     public async ValueTask DisposeAsync()
     {

@@ -98,7 +98,8 @@ public sealed class PythonScriptConfig
         set => _transcriptor = value;
     }
 
-    public string WhisperModel { get; set; }
+    public string WhisperModel { get; set; } = null!;
+    public int MaxSegmentDuration { get; set; } = 30;
 }
 
 public sealed class WorkerCountConfig
