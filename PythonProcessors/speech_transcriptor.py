@@ -2,6 +2,9 @@
 import sys
 import argparse
 import traceback
+import warnings
+
+warnings.filterwarnings("ignore", message="TypedStorage is deprecated")
 
 model_dir = r"C:\Users\timof\whisper_models"
 
@@ -16,16 +19,13 @@ def safe_write_text(path: str, text: str):
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
 
-
 def build_wav_path(segments_dir: str, filename: str) -> str:
     return os.path.join(segments_dir, filename)
-
 
 def build_output_path(transcriptions_dir: str, thread_index: int, filename: str) -> str:
     # Parse filename format: <SessionId>_<MainFileName>.wav
     name_without_ext = os.path.splitext(filename)[0]
     
-    # Extract SessionId and MainFileName
     if "_" in name_without_ext:
         session_id, main_name = name_without_ext.split("_", 1)
     else:
@@ -53,11 +53,6 @@ def load_model(model_name="small"):
               file=sys.stderr, flush=True)
         raise
 
-def detect_language(model, audio):
-    mel = whisper.log_mel_spectrogram(audio).to(model.device)
-    _, probs = model.detect_language(mel)
-    return max(probs, key=probs.get) if probs else "unknown"
-
 def decode_audio(model, audio):
     mel = whisper.log_mel_spectrogram(audio).to(model.device)
     options = whisper.DecodingOptions(fp16=False)
@@ -70,10 +65,9 @@ def transcribe_file(model, file_path):
         audio = whisper.load_audio(file_path)
         audio = whisper.pad_or_trim(audio)
 
-        language = detect_language(model, audio)
         text = decode_audio(model, audio)
 
-        return language, text
+        return text
 
     except Exception as e:
         print(
@@ -92,7 +86,7 @@ def process_task(model, segments_dir, transcriptions_dir, thread_index, filename
         print(f"DONE:{filename}", flush=True)
         return
 
-    language, text = transcribe_file(model, wav_path)
+    text = transcribe_file(model, wav_path)
 
     try:
         os.remove(wav_path)
@@ -107,7 +101,6 @@ def process_task(model, segments_dir, transcriptions_dir, thread_index, filename
 
     try:
         safe_write_text(out_path, text)
-        print(f"[INFO] Saved transcription: {out_path}", flush=True)
     except Exception as e:
         print(f"[ERROR] Failed to write transcription {out_path}: {e}",
               file=sys.stderr,
@@ -174,7 +167,6 @@ def main():
         transcriptions_dir=args.transcriptions_dir,
         thread_index=args.thread_index
     )
-
 
 if __name__ == "__main__":
     main()

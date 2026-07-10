@@ -26,9 +26,8 @@ public abstract class BasePythonProcessor : IWorker, IAsyncDisposable
 
         var startInfo = new ProcessStartInfo
         {
-            // 1. Use bundled Python
             FileName = Path.Combine(AppDir, "python", "python.exe"),
-            // Base arguments: script, inputDir, outputDir, index
+
             Arguments = $"\"{script}\" \"{inputDir}\" \"{outputDir}\" {index}",
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -40,10 +39,8 @@ public abstract class BasePythonProcessor : IWorker, IAsyncDisposable
             WorkingDirectory = AppDir
         };
 
-        // Даем наследникам добавить свои переменные окружения
         ConfigureEnvironment(startInfo);
 
-        // Даем наследникам добавить свои аргументы командной строки
         if (!string.IsNullOrWhiteSpace(specificArgs))
         {
             startInfo.Arguments += " " + specificArgs;
@@ -53,7 +50,6 @@ public abstract class BasePythonProcessor : IWorker, IAsyncDisposable
         _process.OutputDataReceived += (_, e) => OnLine(e.Data, false);
         _process.ErrorDataReceived += (_, e) => OnLine(e.Data, true);
 
-        // Важно: подписываемся на событие выхода процесса
         _process.EnableRaisingEvents = true;
         _process.Exited += (_, _) => HandleProcessExit();
 
@@ -72,7 +68,6 @@ public abstract class BasePythonProcessor : IWorker, IAsyncDisposable
     /// <summary>
     /// Метод для получения специфичных аргументов командной строки.
     /// </summary>
-
     public async Task<List<string>> SendTaskAsync(string fileName, CancellationToken ct, TimeSpan? timeout = null)
     {
         if (_currentTask != null) throw new InvalidOperationException("Worker already busy");
@@ -167,7 +162,7 @@ public abstract class BasePythonProcessor : IWorker, IAsyncDisposable
     {
         await foreach (var log in _logQueue.Reader.ReadAllAsync())
         {
-            try { Console.Error.WriteLine(log); } catch { /* игнорируем падение консоли */ }
+            try { Console.Error.WriteLine(log); } catch { }
         }
     }
 

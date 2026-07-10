@@ -25,7 +25,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WebClient", "WebClient\WebC
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "CommonHttp", "CommonHTTP\CommonHttp.csproj", "{96C76C20-519E-4CBD-ADD5-9E7815AAF889}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WebClient.Tests", "WebClient.Tests\WebClient.Tests.csproj", "{C9113C0B-7321-4AC8-84E8-C1481E4C2ED0}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WebClient.Tests", "WebClient.Tests\WebClient.Tests.csproj", "{C9113C0B-7321-4AC8-84E8-C1481E4C2ED0}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

@@ -5,6 +5,12 @@ using WebClient.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Configuration.AddJsonFile("Configuration.json", optional: false, reloadOnChange: true);
+
+var managerIp = builder.Configuration["Manager:IpAddress"] ?? "127.0.0.1";
+var managerPort = builder.Configuration["Manager:Port"] ?? "5000";
+var managerBaseUrl = $"http://{managerIp}:{managerPort}";
+
 builder.Services.AddRazorPages();
 
 builder.Services.AddDistributedMemoryCache();
@@ -21,7 +27,7 @@ builder.Services.AddSingleton<NetworkStateService>();
 builder.Services
     .AddHttpClient("ManagerClient", client =>
     {
-        client.BaseAddress = new Uri("http://192.168.43.144:5000");
+        client.BaseAddress = new Uri(managerBaseUrl);
 
         client.Timeout = Timeout.InfiniteTimeSpan;
 

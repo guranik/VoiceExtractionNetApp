@@ -12,7 +12,10 @@ public class TranscribeProcessor : BasePythonProcessor
 
     protected override void ConfigureEnvironment(ProcessStartInfo startInfo)
     {
-        // Транскрайберу (например, Whisper) не нужны специфичные переменные окружения для PyTorch.
-        // Если в будущем понадобятся оффлайн-кэши специфично для Whisper, их можно будет добавить сюда.
+        var ffmpegDir = Path.Combine(AppDir, "ffmpeg");
+
+        var env = startInfo.EnvironmentVariables;
+
+        env["PATH"] = $"{ffmpegDir};{env["PATH"]}";
     }
 }

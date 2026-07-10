@@ -4,28 +4,106 @@
     ViewData["Title"] = "Обработка файла";
 }
 
+<style>
+    /* Базовое увеличение шрифтов в контейнере */
+    .container {
+        font-size: 1.25rem;
+    }
+
+    /* Увеличение главного заголовка */
+    .container h2 {
+        font-size: 2.5rem;
+        font-weight: 600;
+        margin-bottom: 1.5rem;
+        color: #333;
+    }
+
+    /* Метки полей формы */
+    .form-label {
+        font-weight: 600;
+        font-size: 1.3rem;
+        margin-bottom: 0.5rem;
+    }
+
+    /* Увеличение высоты поля выбора файла */
+    .form-control {
+        font-size: 1.2rem;
+        padding: 0.75rem 1rem;
+        height: calc(3.5rem + 2px);
+    }
+
+    /* Увеличение прогресс-баров */
+    .progress {
+        height: 35px;
+        background-color: #e9ecef;
+        border-radius: 0.3rem;
+        font-size: 1.1rem;
+    }
+
+    .progress-bar {
+        line-height: 35px;
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+
+    /* Статусы под прогресс-барами */
+    small.text-muted {
+        font-size: 1.05rem;
+        margin-top: 0.25rem;
+        display: block;
+    }
+
+    /* Увеличение отступов между секциями */
+    .mt-4 {
+        margin-top: 2rem !important;
+    }
+
+    hr {
+        margin: 2.5rem 0;
+        border-top: 2px solid rgba(0, 0, 0, 0.1);
+    }
+
+    /* Сообщения и секция скачивания */
+    .alert {
+        font-size: 1.2rem;
+        padding: 1rem 1.5rem;
+    }
+
+    .btn-lg {
+        font-size: 1.3rem;
+        padding: 0.75rem 1.5rem;
+    }
+
+    /* Расстояние между кнопкой скачивания и текстом под ней */
+    #downloadSection small {
+        font-size: 1rem;
+    }
+</style>
+
 <div class="container mt-4">
     <h2>Обработка файла</h2>
 
     <form id="processingForm" enctype="multipart/form-data">
         @Html.AntiForgeryToken()
-        <div class="mb-3">
+        <div class="mb-4">
             <label for="sourceFile" class="form-label">Исходный файл</label>
             <input type="file" class="form-control" id="sourceFile" name="file" required />
         </div>
 
-        <button type="submit" class="btn btn-primary btn-lg" id="startBtn">Начать обработку</button>
+        <button type="submit" class="btn btn-primary btn-lg" id="startBtn">
+            <i class="bi bi-play-circle"></i> Начать обработку
+        </button>
     </form>
 
     <hr />
 
     <!-- Прогресс-бары -->
-    <div class="row mt-4">
+    <div class="row mt-4 gy-4">
         <div class="col-md-6">
-            <label>Извлечение сегментов</label>
-            <div class="progress" style="height: 25px;">
+            <label class="form-label">Извлечение сегментов</label>
+            <div class="progress">
                 <div id="extractProgress" class="progress-bar progress-bar-striped progress-bar-animated"
-                     role="progressbar" style="width: 0%">
+                     role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
                     0%
                 </div>
             </div>
@@ -33,10 +111,10 @@
         </div>
 
         <div class="col-md-6">
-            <label>Транскрипция</label>
-            <div class="progress" style="height: 25px;">
+            <label class="form-label">Транскрипция</label>
+            <div class="progress">
                 <div id="transcribeProgress" class="progress-bar progress-bar-striped progress-bar-animated bg-success"
-                     role="progressbar" style="width: 0%">
+                     role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
                     0%
                 </div>
             </div>
@@ -44,10 +122,9 @@
         </div>
     </div>
 
-    <div id="resultMessage" class="alert alert-info mt-3 d-none"></div>
+    <div id="resultMessage" class="alert alert-info mt-4 d-none"></div>
 
-    <!-- Кнопка скачивания (появится после обработки) -->
-    <div id="downloadSection" class="mt-3 d-none">
+    <div id="downloadSection" class="mt-4 d-none">
         <a id="downloadLink" class="btn btn-success btn-lg" download>
             <i class="bi bi-download"></i> Скачать результат
         </a>
@@ -56,6 +133,6 @@
 </div>
 
 @section Scripts {
-    <script src="~/js/wavValidator.js?v=1.1"></script>
-    <script src="/js/fileProcessor.js?v=1.5.0"></script>
+        <script src="~/js/wavValidator.js?v=1.1"></script>
+        <script src="/js/fileProcessor.js?v=1.5.0"></script>
 }
